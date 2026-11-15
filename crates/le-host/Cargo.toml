@@ -11,5 +11,11 @@ publish = false
 hci-wire = { path = "../hci-wire" }
 att-server = { path = "../att-server" }
 
+[dev-dependencies]
+# The live example and the shim test wire the serial shim in; gattmirror does not depend on le-host.
+gattmirror = { path = "../gattmirror" }
+gatt-profile = { path = "../gatt-profile" }
+serial-stream = { path = "../serial-stream" }
+
 [lints]
 workspace = true

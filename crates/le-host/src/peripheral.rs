@@ -1009,4 +1009,181 @@ mod tests {
         run(&mut p, &h);
         assert_eq!(*seen.lock().unwrap(), 0);
     }
+
+    /// The serial shim end to end over the fake controller: a guest Write Command of `cmd` to the
+    /// write characteristic reaches a stub adapter through `SerialBackend`, and the reply comes back
+    /// as notifications. Returns the notification values in the order they were sent.
+    fn shim_roundtrip(cmd: &[u8], mtu_req: Option<u16>) -> Vec<Vec<u8>> {
+        shim_run(|wh| {
+            let mut pkts = vec![conn_event(0, H)];
+            if let Some(m) = mtu_req {
+                pkts.push(acl(H, CID_ATT, &Pdu::MtuReq { mtu: m }.encode()));
+            }
+            let mut write = vec![0x52, wh.to_le_bytes()[0], wh.to_le_bytes()[1]];
+            write.extend_from_slice(cmd);
+            pkts.push(acl(H, CID_ATT, &write));
+            pkts
+        })
+    }
+
+    fn write_cmd(h: u16, wh: u16, v: &[u8]) -> Vec<u8> {
+        let mut write = vec![0x52, wh.to_le_bytes()[0], wh.to_le_bytes()[1]];
+        write.extend_from_slice(v);
+        acl(h, CID_ATT, &write)
+    }
+
+    /// Run the shim with the inbound packets `script` gives for the write handle.
+    fn shim_run(script: impl FnOnce(u16) -> Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+        use gattmirror::serial::{FFF0, SerialBackend, WriteBuffering, serial_pair};
+        use gattmirror::sim::Session;
+        use gattmirror::{Mirror, NotifyPolicy};
+        use serial_stream::ByteStream;
+        use serial_stream::mem;
+
+        let profile = gatt_profile::parse(FFF0).unwrap();
+        let (write_char, _) = serial_pair(&profile).unwrap();
+        let (ours, mut theirs) = mem::pair();
+        let rx = theirs.receiver().unwrap();
+        std::thread::spawn(move || {
+            let mut session = Session::default();
+            let mut line = Vec::new();
+            while let Ok(chunk) = rx.recv() {
+                for b in chunk {
+                    if b == b'\r' {
+                        let reply = session.respond(&line);
+                        line.clear();
+                        let _ = theirs.write(&reply);
+                    } else {
+                        line.push(b);
+                    }
+                }
+            }
+        });
+        let backend = SerialBackend::new(profile, ours, WriteBuffering::UntilByte(b'\r')).unwrap();
+        let mut mirror = Mirror::new(backend, 247).unwrap();
+        mirror.set_policy(NotifyPolicy::Always);
+        let wh = mirror.value_handle(write_char).unwrap();
+        let (server, mut pump) = mirror.into_parts();
+
+        let mut ctl = Controller::new(Fake::default());
+        ctl.init().unwrap();
+        let mut fake = ctl.into_inner();
+        fake.block_when_idle();
+        fake.complete_acl_automatically();
+        for pkt in script(wh) {
+            fake.push_inbound(pkt);
+        }
+        let info = ControllerInfo {
+            bd_addr: [0; 6],
+            le_acl_len: 27,
+            le_acl_count: 20,
+        };
+        let (mut p, h) = Peripheral::new(
+            Controller::new(fake),
+            info,
+            Advertisement::new("T", None).unwrap(),
+            AdvParams::default(),
+            server,
+        );
+        let stopper = h.clone();
+        let mut got = false;
+        let started = std::time::Instant::now();
+        p.set_source(Box::new(move |srv| {
+            let out = pump.drain(srv);
+            // Stop on the first reply, or after three seconds so a broken path fails, not hangs.
+            if (!out.is_empty() || started.elapsed() > std::time::Duration::from_secs(3)) && !got {
+                got = true;
+                stopper.stop();
+            }
+            out
+        }));
+        p.set_link_hook(Box::new(|_, srv| srv.backend().reset_connection()));
+        p.serve().unwrap();
+        let fake = std::mem::replace(&mut p.ctl, Controller::new(Fake::default())).into_inner();
+        att(&fake)
+            .into_iter()
+            .filter_map(|p| match p {
+                Pdu::Notification { value, .. } => Some(value),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_guest_write_of_ati_comes_back_as_a_notification_through_the_shim() {
+        let chunks = shim_roundtrip(b"ATI\r", None);
+        assert_eq!(chunks.concat(), b"ATI\rELM327 v1.5\r\n\r\n>");
+    }
+
+    #[test]
+    fn a_reply_longer_than_the_mtu_is_cut_in_order() {
+        // ATZ's reply is 22 bytes; the default MTU of 23 leaves 20 per notification.
+        let chunks = shim_roundtrip(b"ATZ\r", None);
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks.iter().all(|c| c.len() <= 20));
+        assert_eq!(chunks.concat(), b"ATZ\r\r\nELM327 v1.5\r\n\r\n>");
+    }
+
+    #[test]
+    fn a_larger_mtu_gives_the_reply_in_one_notification() {
+        let chunks = shim_roundtrip(b"ATZ\r", Some(247));
+        assert_eq!(chunks.len(), 1);
+    }
+
+    #[test]
+    fn a_partial_command_does_not_survive_a_reconnection() {
+        // "AT" then a drop, then "I" and the terminator: with the link hook clearing the
+        // backend, the adapter sees "I", not "ATI".
+        let chunks = shim_run(|wh| {
+            vec![
+                conn_event(0, H),
+                write_cmd(H, wh, b"AT"),
+                disc_event(H),
+                conn_event(0, H + 1),
+                write_cmd(H + 1, wh, b"I\r"),
+            ]
+        });
+        let text = chunks.concat();
+        assert!(text.starts_with(b"I\r"), "{text:?}");
+        assert!(!text.windows(6).any(|w| w == b"ELM327"));
+    }
+
+    /// The live Voltage session's request/response pairs (everything but the asynchronous
+    /// notifications and the writes) are reproduced exactly by the server over the FFF0 profile.
+    #[test]
+    fn the_recorded_discovery_is_reproduced_by_the_server() {
+        use gattmirror::Mirror;
+        use gattmirror::serial::{FFF0, SerialBackend, WriteBuffering};
+        use serial_stream::mem;
+
+        let (ours, _theirs) = mem::pair();
+        let profile = gatt_profile::parse(FFF0).unwrap();
+        let backend = SerialBackend::new(profile, ours, WriteBuffering::UntilByte(b'\r')).unwrap();
+        let (mut server, _pump) = Mirror::new(backend, 247).unwrap().into_parts();
+        let fixture = include_str!("../tests/fixtures/voltage_session.txt");
+        let unhex = |h: &str| -> Vec<u8> {
+            (0..h.len() / 2)
+                .map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap())
+                .collect()
+        };
+        let mut lines = fixture.lines().filter(|l| !l.starts_with('#'));
+        let mut checked = 0;
+        while let Some(l) = lines.next() {
+            let Some(req) = l.strip_prefix("> ") else {
+                continue;
+            };
+            let req = unhex(req);
+            if req[0] == 0x52 {
+                continue;
+            }
+            let want = unhex(lines.next().unwrap().strip_prefix("< ").unwrap());
+            assert_eq!(
+                server.handle_bytes(&req).unwrap(),
+                want,
+                "request {req:02x?}"
+            );
+            checked += 1;
+        }
+        assert!(checked >= 10, "{checked}");
+    }
 }
