@@ -1,0 +1,16 @@
+[package]
+name = "winrt-backend"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "gattmirror Backend over winrt-gatt: the real-adapter side of the mirror on Windows"
+publish = false
+
+[dependencies]
+gatt-profile = { path = "../gatt-profile" }
+gattmirror = { path = "../gattmirror" }
+winrt-gatt = { path = "../winrt-gatt" }
+
+[lints]
+workspace = true

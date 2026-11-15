@@ -7,7 +7,7 @@
 //! behaviour here is tested against a fake transport; `winrt` supplies the real one on Windows.
 //!
 //! When an operation fails while the transport reports the link down, the adapter walks the
-//! [`link::State`](crate::link::State) machine through back-off, reconnects through the
+//! [`link::State`] machine through back-off, reconnects through the
 //! [`Connector`], checks the peripheral still offers the same table, re-enables the subscriptions the
 //! caller had asked for, and retries the operation once.
 
@@ -140,6 +140,16 @@ impl<C: Connector> Adapter<C> {
     /// peripheral's attribute handle; [`index_of_handle`](Self::index_of_handle) maps it back.
     pub const fn take_notifications(&mut self) -> Option<Receiver<ValueChange>> {
         self.notify_rx.take()
+    }
+
+    /// The peripheral handle of every characteristic, in index order.
+    #[must_use]
+    pub fn handles(&self) -> Vec<u16> {
+        self.map
+            .characteristics
+            .iter()
+            .map(|(_, _, h)| *h)
+            .collect()
     }
 
     /// The characteristic index that owns a peripheral handle.
