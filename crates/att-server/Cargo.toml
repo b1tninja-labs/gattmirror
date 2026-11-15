@@ -1,0 +1,11 @@
+[package]
+name = "att-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ATT PDU codec, GATT attribute database and server request handling, with no I/O and no dependencies"
+publish = false
+
+[lints]
+workspace = true
