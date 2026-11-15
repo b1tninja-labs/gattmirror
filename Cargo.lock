@@ -28,7 +28,10 @@ name = "le-host"
 version = "0.1.0"
 dependencies = [
  "att-server",
+ "gatt-profile",
+ "gattmirror",
  "hci-wire",
+ "serial-stream",
 ]
 
 [[package]]
