@@ -1,0 +1,25 @@
+gatt-profile 1
+# FFF0 serial service plus Device Information, the combination the vendor page above lists. Properties
+# on the Device Information characteristics are not stated there; read is assumed. The vendor page also
+# lists a service FEF5 "for internal use only", which is deliberately not reproduced.
+device-name Example OBD Adapter
+adv-service fff0
+
+service 1800 primary
+  characteristic 2a00 read value=4578616d706c65204f42442041646170746572
+  characteristic 2a01 read value=0000
+
+service 1801 primary
+  characteristic 2a05 indicate
+    descriptor 2902 value=0000
+
+service 180a primary
+  characteristic 2a29 read value=4578616d706c65
+  characteristic 2a24 read value=4578616d706c65
+  characteristic 2a26 read value=312e30
+  characteristic 2a28 read value=312e30
+
+service fff0 primary
+  characteristic fff1 notify
+    descriptor 2902 value=0000
+  characteristic fff2 write,write-no-response

@@ -1,5 +1,10 @@
-# A serial adapter exposing the common FFF0 profile: FFF1 notifies (adapter to host),
-# FFF2 is written (host to adapter). Shape as in obd-bridge docs/ble-re.md; no address.
+gatt-profile 1
+# The common FFF0 serial profile: FFF1 notifies (adapter to host), FFF2 is written (host to adapter).
+# Sources: obd-bridge docs/ble-re.md (static recovery from the vendor app, endpoints chosen by property)
+# and the vendor's public adapter notes,
+# https://support.scantool.net/support/solutions/articles/43000746707-obdlink-cx-adapter-notes
+# (FFF0 "Custom UART", FFF1 notification, FFF2 write and write without response). Descriptors are not
+# stated anywhere read; the 2902 below is implied by notify.
 device-name Example Serial Adapter
 adv-name Example Serial Adapter
 adv-service fff0

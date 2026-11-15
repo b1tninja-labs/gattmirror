@@ -1,0 +1,3 @@
+# expect: 3 HeaderNotFirst
+gatt-profile 1
+gatt-profile 1

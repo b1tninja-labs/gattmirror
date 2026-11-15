@@ -1,0 +1,3 @@
+# expect: 3 HeaderNotFirst
+device-name a
+gatt-profile 1

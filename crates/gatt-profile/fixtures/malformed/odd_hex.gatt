@@ -1,0 +1,3 @@
+# expect: 3 BadHex
+service 1800
+characteristic 2a00 read value=abc

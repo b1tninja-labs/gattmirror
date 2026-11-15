@@ -1,0 +1,11 @@
+gatt-profile 1
+# HM-10 style single-characteristic serial module: service FFE0, characteristic FFE1 that both
+# notifies and is written. Source: a search-result excerpt of the DSD TECH HM-10 datasheet saying
+# "Notify and Write"; the datasheet itself was not read, so whether the write is with or without
+# response is unknown and both are listed. The 2902 is implied by notify.
+device-name Example HM10
+adv-service ffe0
+
+service ffe0 primary
+  characteristic ffe1 notify,write,write-no-response
+    descriptor 2902 value=0000

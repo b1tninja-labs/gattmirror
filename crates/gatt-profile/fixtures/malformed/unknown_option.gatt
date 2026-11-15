@@ -1,0 +1,3 @@
+# expect: 3 BadOption
+service 1800
+characteristic 2a00 read colour=red

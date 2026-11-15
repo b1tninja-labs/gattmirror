@@ -1,4 +1,8 @@
-# A 128-bit serial service (the common UART-over-BLE layout) for the long-UUID path.
+gatt-profile 1
+# Nordic UART Service. Source: Nordic nRF Connect SDK, "Nordic UART Service (NUS)",
+# https://nrfconnectdocs.nordicsemi.com/ncs/latest/nrf/libraries/bluetooth/services/nus.html
+# (current page: ...0002 is written by the peer, ...0003 notifies). An older nRF5 SDK page was
+# reported to swap them and was not read. The 2902 descriptor is implied by notify, not stated there.
 device-name Example UART
 adv-service 6e400001-b5a3-f393-e0a9-e50e24dcca9e
 
