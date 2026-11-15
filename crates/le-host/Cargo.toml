@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 hci-wire = { path = "../hci-wire" }
+att-server = { path = "../att-server" }
 
 [lints]
 workspace = true

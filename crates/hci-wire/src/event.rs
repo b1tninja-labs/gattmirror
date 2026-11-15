@@ -7,6 +7,10 @@ use crate::opcode::Opcode;
 pub struct EventCode(pub u8);
 
 impl EventCode {
+    /// Disconnection Complete. `[unread]`
+    pub const DISCONNECTION_COMPLETE: Self = Self(0x05);
+    /// Number Of Completed Packets. `[unread]`
+    pub const NUMBER_OF_COMPLETED_PACKETS: Self = Self(0x13);
     /// Command Complete.
     pub const COMMAND_COMPLETE: Self = Self(0x0E);
     /// Command Status.

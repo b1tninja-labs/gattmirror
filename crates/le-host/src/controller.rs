@@ -135,6 +135,37 @@ impl<T: Read + Write> Controller<T> {
         }
     }
 
+    /// The next packet from the controller, oldest backlog first; `None` if the transport timed
+    /// out with nothing to read. Command credits are tracked from Command Complete and Status.
+    pub(crate) fn recv(&mut self) -> Result<Option<Packet>, Error> {
+        let packet = match self.backlog.pop_front() {
+            Some(p) => p,
+            None => match self.next_packet() {
+                Ok(p) => p,
+                Err(Error::Timeout) => return Ok(None),
+                Err(e) => return Err(e),
+            },
+        };
+        if let Packet::Event { code, params } = &packet {
+            if *code == EVENT_NOT_READY {
+                return Err(Error::NotReset);
+            }
+            if let Event::CommandComplete { num_packets, .. }
+            | Event::CommandStatus { num_packets, .. } = Event::parse(*code, params)
+            {
+                self.credits = num_packets;
+            }
+        }
+        Ok(Some(packet))
+    }
+
+    /// Write one packet (ACL data) without waiting for any answer.
+    pub(crate) fn send(&mut self, packet: &Packet) -> Result<(), Error> {
+        self.io.write_all(&packet.encode())?;
+        self.io.flush()?;
+        Ok(())
+    }
+
     /// Absorb one packet: update credits from a Command Complete or Status, keep the rest.
     /// Returns the event if it answers `awaited`.
     fn absorb(&mut self, awaited: Option<Opcode>) -> Result<Option<Event>, Error> {

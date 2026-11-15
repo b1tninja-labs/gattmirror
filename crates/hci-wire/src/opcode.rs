@@ -63,6 +63,8 @@ pub mod opcodes {
     pub const LE_SET_ADVERTISING_DATA: Opcode = Opcode::new(0x08, 0x008);
     /// LE Set Scan Response Data (LE group `0x08`, command `0x009`). `[unread]`
     pub const LE_SET_SCAN_RESPONSE_DATA: Opcode = Opcode::new(0x08, 0x009);
+    /// Disconnect (link control group `0x01`, command `0x006`). `[unread]`
+    pub const DISCONNECT: Opcode = Opcode::new(0x01, 0x006);
 }
 
 #[cfg(test)]
@@ -94,6 +96,11 @@ mod tests {
         assert_eq!(opcodes::LE_SET_ADVERTISING_PARAMETERS.0, 0x2006);
         assert_eq!(opcodes::LE_SET_ADVERTISING_DATA.0, 0x2008);
         assert_eq!(opcodes::LE_SET_SCAN_RESPONSE_DATA.0, 0x2009);
+    }
+
+    #[test]
+    fn disconnect_has_the_value_a_controller_accepted() {
+        assert_eq!(opcodes::DISCONNECT.0, 0x0406);
     }
 
     #[test]
