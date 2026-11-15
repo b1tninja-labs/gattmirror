@@ -11,6 +11,14 @@ name = "gatt-profile"
 version = "0.1.0"
 
 [[package]]
+name = "gattmirror"
+version = "0.1.0"
+dependencies = [
+ "att-server",
+ "gatt-profile",
+]
+
+[[package]]
 name = "hci-wire"
 version = "0.1.0"
 
@@ -185,8 +193,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
+name = "winrt-backend"
+version = "0.1.0"
+dependencies = [
+ "gatt-profile",
+ "gattmirror",
+ "winrt-gatt",
+]
+
+[[package]]
 name = "winrt-gatt"
 version = "0.1.0"
 dependencies = [
+ "gatt-profile",
  "windows",
 ]

@@ -1,0 +1,22 @@
+[package]
+name = "gattmirror"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Mirror a BLE peripheral's GATT table to a virtual controller: backend trait, table builder, relay and a simulated adapter"
+publish = false
+
+[lib]
+name = "gattmirror"
+
+[[bin]]
+name = "gattmirror"
+path = "src/main.rs"
+
+[dependencies]
+att-server = { path = "../att-server" }
+gatt-profile = { path = "../gatt-profile" }
+
+[lints]
+workspace = true

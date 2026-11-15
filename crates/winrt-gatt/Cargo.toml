@@ -10,6 +10,9 @@ publish = false
 [lints]
 workspace = true
 
+[dependencies]
+gatt-profile = { path = "../gatt-profile" }
+
 # Microsoft's first-party `windows` crate (WinRT projections), Windows targets only. No async runtime:
 # WinRT async operations are driven with `IAsyncOperation::get()` on the calling thread, as in obd-bridge.
 [target.'cfg(windows)'.dependencies.windows]
