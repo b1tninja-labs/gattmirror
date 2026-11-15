@@ -9,6 +9,7 @@
 //! back-off. The Windows module is compiled only with `cfg(windows)`, so the workspace still builds
 //! elsewhere.
 
+pub mod adapter;
 pub mod address;
 pub mod chunk;
 pub mod error;
@@ -23,7 +24,9 @@ pub mod uuid;
 mod winrt;
 
 #[cfg(windows)]
-pub use winrt::{ConnectOptions, DEFAULT_TIMEOUT, Found, WinrtClient, scan};
+pub use winrt::{
+    ConnectOptions, DEFAULT_TIMEOUT, Found, Target, WinrtClient, WinrtConnector, scan,
+};
 
 pub use error::Error;
 pub use filter::ScanFilter;

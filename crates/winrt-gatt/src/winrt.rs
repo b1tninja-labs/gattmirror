@@ -50,7 +50,7 @@ fn status_ok(status: GattCommunicationStatus, what: &str) -> Result<(), Error> {
 }
 
 /// How long any single platform operation may take unless [`ConnectOptions::timeout`] says otherwise.
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Wait for an async operation, polling its status, and cancel it if `timeout` passes. `IAsyncOperation::get()`
 /// would block the calling thread for as long as the stack cared to take, which on a peripheral that
@@ -187,6 +187,20 @@ impl WinrtClient {
         address: u64,
         opts: &ConnectOptions,
     ) -> Result<(Self, Receiver<ValueChange>), Error> {
+        let (tx, rx) = mpsc::channel();
+        Ok((Self::connect_into(address, opts, tx)?, rx))
+    }
+
+    /// As [`connect`](Self::connect), but notifications go to a channel the caller already owns, so
+    /// one receiver can span several connections (see [`crate::adapter`]).
+    ///
+    /// # Errors
+    /// A platform or GATT status error from any step.
+    pub fn connect_into(
+        address: u64,
+        opts: &ConnectOptions,
+        tx: Sender<ValueChange>,
+    ) -> Result<Self, Error> {
         let timeout = opts.timeout.unwrap_or(DEFAULT_TIMEOUT);
         let device = wait(
             BluetoothLEDevice::FromBluetoothAddressAsync(address)?,
@@ -276,23 +290,19 @@ impl WinrtClient {
         }
         table.check_unique_handles()?;
 
-        let (tx, rx) = mpsc::channel();
-        Ok((
-            Self {
-                table,
-                chars,
-                descs,
-                subs: Mutex::new(HashMap::new()),
-                sender: Arc::new(Mutex::new(tx)),
-                connected,
-                timeout,
-                status_token,
-                session,
-                _services: services,
-                device,
-            },
-            rx,
-        ))
+        Ok(Self {
+            table,
+            chars,
+            descs,
+            subs: Mutex::new(HashMap::new()),
+            sender: Arc::new(Mutex::new(tx)),
+            connected,
+            timeout,
+            status_token,
+            session,
+            _services: services,
+            device,
+        })
     }
 
     /// The discovered table.
@@ -488,5 +498,83 @@ impl Drop for WinrtClient {
             }
         }
         let _ = self.device.RemoveConnectionStatusChanged(self.status_token);
+    }
+}
+
+impl crate::adapter::Transport for WinrtClient {
+    fn read(&mut self, handle: u16) -> Result<Vec<u8>, Error> {
+        Self::read(self, handle)
+    }
+
+    fn write(&mut self, handle: u16, data: &[u8], mode: WriteMode) -> Result<(), Error> {
+        Self::write_chunked(self, handle, data, mode)
+    }
+
+    fn subscribe(&mut self, handle: u16) -> Result<(), Error> {
+        Self::subscribe(self, handle)
+    }
+
+    fn unsubscribe(&mut self, handle: u16) -> Result<(), Error> {
+        Self::unsubscribe(self, handle)
+    }
+
+    fn is_connected(&self) -> bool {
+        Self::is_connected(self)
+    }
+}
+
+/// How a [`WinrtConnector`] finds its peripheral.
+#[derive(Clone, Debug)]
+pub enum Target {
+    /// A known address; no scan.
+    Address(u64),
+    /// Scan for a match. The address of the first match is remembered for later reconnects.
+    Filter(ScanFilter),
+}
+
+/// A [`crate::adapter::Connector`] over [`WinrtClient`].
+pub struct WinrtConnector {
+    target: Target,
+    scan_timeout: Duration,
+    opts: ConnectOptions,
+    advertised: Option<Found>,
+}
+
+impl WinrtConnector {
+    /// A connector for `target`. `scan_timeout` bounds each scan.
+    #[must_use]
+    pub const fn new(target: Target, scan_timeout: Duration, opts: ConnectOptions) -> Self {
+        Self {
+            target,
+            scan_timeout,
+            opts,
+            advertised: None,
+        }
+    }
+
+    /// What the scan saw (advertised name and services), once one has happened.
+    #[must_use]
+    pub const fn advertised(&self) -> Option<&Found> {
+        self.advertised.as_ref()
+    }
+}
+
+impl crate::adapter::Connector for WinrtConnector {
+    type Transport = WinrtClient;
+
+    fn connect(&mut self, notify: Sender<ValueChange>) -> Result<(WinrtClient, GattTable), Error> {
+        let address = match &self.target {
+            Target::Address(a) => *a,
+            Target::Filter(f) => {
+                let found = scan(f, self.scan_timeout)?;
+                let a = found.address;
+                self.advertised = Some(found);
+                self.target = Target::Address(a);
+                a
+            }
+        };
+        let client = WinrtClient::connect_into(address, &self.opts, notify)?;
+        let table = client.table().clone();
+        Ok((client, table))
     }
 }
