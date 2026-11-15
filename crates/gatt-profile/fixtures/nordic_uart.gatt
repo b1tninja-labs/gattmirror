@@ -1,0 +1,11 @@
+# A 128-bit serial service (the common UART-over-BLE layout) for the long-UUID path.
+device-name Example UART
+adv-service 6e400001-b5a3-f393-e0a9-e50e24dcca9e
+
+service 6e400001-b5a3-f393-e0a9-e50e24dcca9e primary
+  characteristic 6e400002-b5a3-f393-e0a9-e50e24dcca9e write,write-no-response
+  characteristic 6e400003-b5a3-f393-e0a9-e50e24dcca9e notify
+    descriptor 2902 value=0000
+
+service 180a secondary
+  characteristic 2a29 read value=4578616d706c65
