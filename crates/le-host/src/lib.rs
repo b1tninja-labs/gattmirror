@@ -15,4 +15,4 @@ mod peripheral;
 pub use advertising::{AdvParams, Advertisement, Error as AdvertisementError, ServiceUuid};
 pub use controller::{Controller, ControllerInfo, Error};
 pub use l2cap::{CID_ATT, CID_SIGNALLING, CID_SMP, Reassembler, fragment};
-pub use peripheral::{Direction, Handle, NotifyPolicy, Peripheral, Trace};
+pub use peripheral::{Direction, Handle, NotifyPolicy, Peripheral, Source, Trace};

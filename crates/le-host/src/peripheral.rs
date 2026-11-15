@@ -86,6 +86,11 @@ pub enum NotifyPolicy {
     Always,
 }
 
+/// A callback run once per loop pass with the server; the PDUs it returns are sent to the client
+/// as they are (no subscription check, no MTU cut) while a client is connected, and dropped
+/// otherwise. For a backend whose data arrives asynchronously.
+pub type Source<B> = Box<dyn FnMut(&mut Server<B>) -> Vec<Pdu> + Send>;
+
 /// Which way a traced L2CAP frame went.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Direction {
@@ -119,6 +124,7 @@ pub struct Peripheral<T: Read + Write, B: Backend> {
     stopping: bool,
     trace: Option<Trace>,
     policy: NotifyPolicy,
+    source: Option<Source<B>>,
 }
 
 impl<T: Read + Write, B: Backend> Peripheral<T, B> {
@@ -148,6 +154,7 @@ impl<T: Read + Write, B: Backend> Peripheral<T, B> {
                 stopping: false,
                 trace: None,
                 policy: NotifyPolicy::default(),
+                source: None,
             },
             Handle { tx },
         )
@@ -191,6 +198,11 @@ impl<T: Read + Write, B: Backend> Peripheral<T, B> {
     /// Report every L2CAP frame, in and out, to `f` (for debugging and live comparison).
     pub fn set_trace(&mut self, f: Trace) {
         self.trace = Some(f);
+    }
+
+    /// Run `f` once per loop pass (at least every transport read timeout); see [`Source`].
+    pub fn set_source(&mut self, f: Source<B>) {
+        self.source = Some(f);
     }
 
     /// Choose when notifications are sent; see [`NotifyPolicy`].
@@ -393,6 +405,12 @@ impl<T: Read + Write, B: Backend> Peripheral<T, B> {
     /// buffers for. Returns how many ACL packets were written.
     fn pump(&mut self) -> Result<usize, Error> {
         let mut sent = 0;
+        if let Some(src) = self.source.as_mut() {
+            // `enqueue` drops them when no client is connected.
+            for pdu in src(&mut self.server) {
+                self.enqueue(CID_ATT, &pdu.encode());
+            }
+        }
         while let Some(pdu) = self.server.poll_outgoing() {
             self.enqueue(CID_ATT, &pdu.encode());
         }
@@ -891,5 +909,45 @@ mod tests {
         );
         assert_eq!(seen[1].0, Direction::Out);
         assert_eq!(seen.len(), 2);
+    }
+
+    #[test]
+    fn a_source_callback_is_run_each_pass_and_its_pdus_are_sent() {
+        let (mut p, h, t) = rig(20, |f, _| f.push_inbound(conn_event(0, H)));
+        let nv = t.notify;
+        let mut n = 0u8;
+        p.set_source(Box::new(move |_| {
+            n += 1;
+            if n == 1 {
+                vec![Pdu::Notification {
+                    handle: nv,
+                    value: vec![9],
+                }]
+            } else {
+                vec![]
+            }
+        }));
+        let fake = run(&mut p, &h);
+        assert_eq!(
+            att(&fake),
+            [Pdu::Notification {
+                handle: nv,
+                value: vec![9]
+            }]
+        );
+    }
+
+    #[test]
+    fn a_source_pdu_with_no_client_is_dropped() {
+        let (mut p, h, t) = rig(20, |_, _| {});
+        let nv = t.notify;
+        p.set_source(Box::new(move |_| {
+            vec![Pdu::Notification {
+                handle: nv,
+                value: vec![9],
+            }]
+        }));
+        let fake = run(&mut p, &h);
+        assert_eq!(fake.acl_out().len(), 0);
     }
 }
