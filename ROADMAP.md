@@ -37,10 +37,10 @@ Status:
 | Crate | Role | Rows |
 |---|---|---|
 | `hci-wire` | H4 framing, HCI packets, typed events | [crates/hci-wire/ROADMAP.md](crates/hci-wire/ROADMAP.md) |
-| `att-server` | ATT PDUs and the GATT attribute database | not started |
+| `att-server` | ATT PDUs and the GATT attribute database | [crates/att-server/ROADMAP.md](crates/att-server/ROADMAP.md) |
 | `le-host` | LE peripheral host over HCI: advertise, connect, L2CAP | [crates/le-host/ROADMAP.md](crates/le-host/ROADMAP.md) (advertising slice) |
-| `gatt-profile` | text snapshot of a GATT table | not started |
-| `winrt-gatt` | Windows GATT client toward the real adapter | not started |
+| `gatt-profile` | text snapshot of a GATT table | [crates/gatt-profile/ROADMAP.md](crates/gatt-profile/ROADMAP.md) |
+| `winrt-gatt` | Windows GATT client toward the real adapter | [crates/winrt-gatt/ROADMAP.md](crates/winrt-gatt/ROADMAP.md) |
 | `gattmirror` | the relay binary | not started |
 
 A crate gets a ROADMAP file when work on it starts, not before: an empty table is a promise nobody keeps.
