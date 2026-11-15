@@ -1,12 +1,21 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use crate::DEFAULT_MTU;
-use crate::db::{Database, Kind, Value};
+use crate::db::{Database, Kind, Level, Value};
 use crate::pdu::{DecodeError, ErrorCode, GroupEntry, Pdu, opcode};
 use crate::uuid::Uuid;
 
 /// The longest attribute value ATT allows.
 const MAX_VALUE_LEN: usize = 512;
+/// Prepare Write parts a client may queue before Prepare Queue Full.
+const MAX_PREPARED_PARTS: usize = 64;
+/// Bytes of prepare-write payload held per connection (four maximum-length values).
+const MAX_PREPARED_BYTES: usize = 4 * MAX_VALUE_LEN;
+/// Notifications and indications waiting for the transport; beyond it `notify` fails.
+const MAX_OUTGOING: usize = 256;
+/// How long a transport should wait for an indication confirmation before treating the
+/// connection as lost. The figure is from memory of the Core Specification and is `[unread]`.
+pub const CONFIRMATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 /// A CCCD write with bits the characteristic's properties do not allow. The code is from memory
 /// of the Core Specification Supplement and is `[unread]`.
 const CCCD_IMPROPERLY_CONFIGURED: u8 = 0xFD;
@@ -49,6 +58,11 @@ pub trait Backend {
     /// unchanged.
     fn write(&mut self, handle: u16, value: &[u8], with_response: bool) -> Result<(), ErrorCode>;
 
+    /// The client confirmed the indication that was outstanding for `handle`.
+    fn indication_confirmed(&mut self, handle: u16) {
+        let _ = handle;
+    }
+
     /// The client changed its subscription to the characteristic whose value is at `value_handle`.
     fn subscription_changed(&mut self, value_handle: u16, subscription: Subscription) {
         let _ = (value_handle, subscription);
@@ -82,6 +96,8 @@ pub enum SendError {
     NotSubscribed,
     /// The value is longer than the maximum attribute length.
     TooLong,
+    /// Too many updates are already waiting for the transport.
+    QueueFull,
 }
 
 #[derive(Debug)]
@@ -109,12 +125,12 @@ pub struct Server<B> {
     backend: B,
     max_mtu: u16,
     mtu: u16,
-    mtu_exchanged: bool,
     cccd: BTreeMap<u16, u16>,
     prepared: Vec<Prepared>,
-    prepare_limit: usize,
+    prepared_bytes: usize,
+    link_level: Level,
     outgoing: VecDeque<Outgoing>,
-    indication_pending: bool,
+    pending_indication: Option<u16>,
 }
 
 fn err(request: u8, handle: u16, code: ErrorCode) -> Pdu {
@@ -133,12 +149,12 @@ impl<B: Backend> Server<B> {
             backend,
             max_mtu: max_mtu.max(DEFAULT_MTU),
             mtu: DEFAULT_MTU,
-            mtu_exchanged: false,
             cccd: BTreeMap::new(),
             prepared: Vec::new(),
-            prepare_limit: 64,
+            prepared_bytes: 0,
+            link_level: Level::Open,
             outgoing: VecDeque::new(),
-            indication_pending: false,
+            pending_indication: None,
         }
     }
 
@@ -168,16 +184,29 @@ impl<B: Backend> Server<B> {
     /// Forget everything about the client: MTU, subscriptions, queued writes and updates.
     pub fn reset(&mut self) {
         self.mtu = DEFAULT_MTU;
-        self.mtu_exchanged = false;
         self.cccd.clear();
         self.prepared.clear();
         self.outgoing.clear();
-        self.indication_pending = false;
+        self.pending_indication = None;
+        self.prepared_bytes = 0;
+        self.link_level = Level::Open;
     }
 
     /// True between sending an indication and receiving its confirmation.
     pub fn indication_pending(&self) -> bool {
-        self.indication_pending
+        self.pending_indication.is_some()
+    }
+
+    /// The value handle of the indication awaiting its confirmation, if any. A transport that
+    /// sees it unchanged for [`CONFIRMATION_TIMEOUT`] should drop the connection.
+    pub fn pending_indication(&self) -> Option<u16> {
+        self.pending_indication
+    }
+
+    /// Tell the server how well the link is protected; attributes with a higher
+    /// [`require`](crate::DatabaseBuilder::require)ment are refused until it is raised.
+    pub fn set_link_level(&mut self, level: Level) {
+        self.link_level = level;
     }
 
     /// Queue a notification for the characteristic whose value is at `value_handle`.
@@ -202,6 +231,9 @@ impl<B: Backend> Server<B> {
         if value.len() > MAX_VALUE_LEN {
             return Err(SendError::TooLong);
         }
+        if self.outgoing.len() >= MAX_OUTGOING {
+            return Err(SendError::QueueFull);
+        }
         let Some(cccd) = self.db.cccd_for(handle) else {
             return Err(SendError::NotSubscribable);
         };
@@ -224,12 +256,12 @@ impl<B: Backend> Server<B> {
         let pos = self
             .outgoing
             .iter()
-            .position(|o| !o.indicate || !self.indication_pending)?;
+            .position(|o| !o.indicate || self.pending_indication.is_none())?;
         let o = self.outgoing.remove(pos)?;
         let mut value = o.value;
         value.truncate(usize::from(self.mtu) - 3);
         if o.indicate {
-            self.indication_pending = true;
+            self.pending_indication = Some(o.handle);
             Some(Pdu::Indication {
                 handle: o.handle,
                 value,
@@ -282,6 +314,7 @@ impl<B: Backend> Server<B> {
             Pdu::ReadBlobReq { handle, offset } => {
                 self.read(*handle, usize::from(*offset), opcode::READ_BLOB_REQ)
             }
+            Pdu::ReadMultipleReq { handles } => self.read_multiple(handles),
             Pdu::ReadByGroupTypeReq {
                 start,
                 end,
@@ -302,7 +335,9 @@ impl<B: Backend> Server<B> {
             } => self.prepare_write(*handle, *offset, value),
             Pdu::ExecuteWriteReq { flags } => self.execute_write(*flags),
             Pdu::Confirmation => {
-                self.indication_pending = false;
+                if let Some(h) = self.pending_indication.take() {
+                    self.backend.indication_confirmed(h);
+                }
                 return None;
             }
             _ => return None,
@@ -314,10 +349,6 @@ impl<B: Backend> Server<B> {
     }
 
     fn exchange_mtu(&mut self, client: u16) -> Pdu {
-        if self.mtu_exchanged {
-            return err(opcode::MTU_REQ, 0, ErrorCode::RequestNotSupported);
-        }
-        self.mtu_exchanged = true;
         self.mtu = client.max(DEFAULT_MTU).min(self.max_mtu);
         Pdu::MtuRsp { mtu: self.max_mtu }
     }
@@ -328,6 +359,7 @@ impl<B: Backend> Server<B> {
         if !a.read {
             return Err(ErrorCode::ReadNotPermitted);
         }
+        self.check_level(a.read_level)?;
         let handle = a.handle;
         match (&a.kind, &a.value) {
             (Kind::Cccd { .. }, _) => Ok(self
@@ -360,6 +392,25 @@ impl<B: Backend> Server<B> {
         } else {
             Pdu::ReadBlobRsp { value: part }
         }
+    }
+
+    fn read_multiple(&mut self, handles: &[u16]) -> Pdu {
+        const REQ: u8 = opcode::READ_MULTIPLE_REQ;
+        let mut values = Vec::new();
+        for &h in handles {
+            let Some(idx) = self.db.index(h) else {
+                return err(REQ, h, ErrorCode::InvalidHandle);
+            };
+            match self.read_attr(idx) {
+                Ok(v) => values.extend_from_slice(&v),
+                Err(e) => return err(REQ, h, e),
+            }
+            if values.len() >= self.max_payload() - 1 {
+                break;
+            }
+        }
+        values.truncate(self.max_payload() - 1);
+        Pdu::ReadMultipleRsp { values }
     }
 
     fn find_info(&self, start: u16, end: u16) -> Pdu {
@@ -485,9 +536,23 @@ impl<B: Backend> Server<B> {
         let idx = self.db.index(handle).ok_or(ErrorCode::InvalidHandle)?;
         let a = &self.db.attrs[idx];
         if (with_response && a.write) || (!with_response && a.write_cmd) {
+            self.check_level(a.write_level)?;
             Ok(idx)
         } else {
             Err(ErrorCode::WriteNotPermitted)
+        }
+    }
+
+    /// Insufficient Authentication if the attribute needs an authenticated link, Insufficient
+    /// Encryption if only encryption is missing. Which of the two a real server picks when nothing
+    /// is encrypted is `[unread]`.
+    fn check_level(&self, needed: Level) -> Result<(), ErrorCode> {
+        if self.link_level >= needed {
+            Ok(())
+        } else if needed == Level::Authenticated {
+            Err(ErrorCode::InsufficientAuthentication)
+        } else {
+            Err(ErrorCode::InsufficientEncryption)
         }
     }
 
@@ -532,9 +597,19 @@ impl<B: Backend> Server<B> {
         if let Err(e) = self.check_writable(handle, true) {
             return err(REQ, handle, e);
         }
-        if self.prepared.len() >= self.prepare_limit {
+        if usize::from(offset) > MAX_VALUE_LEN {
+            return err(REQ, handle, ErrorCode::InvalidOffset);
+        }
+        if usize::from(offset) + value.len() > MAX_VALUE_LEN || value.len() + 5 > self.max_payload()
+        {
+            return err(REQ, handle, ErrorCode::InvalidAttributeValueLength);
+        }
+        if self.prepared.len() >= MAX_PREPARED_PARTS
+            || self.prepared_bytes + value.len() > MAX_PREPARED_BYTES
+        {
             return err(REQ, handle, ErrorCode::PrepareQueueFull);
         }
+        self.prepared_bytes += value.len();
         self.prepared.push(Prepared {
             handle,
             offset,
@@ -553,6 +628,7 @@ impl<B: Backend> Server<B> {
     fn execute_write(&mut self, flags: u8) -> Pdu {
         const REQ: u8 = opcode::EXECUTE_WRITE_REQ;
         let queue = std::mem::take(&mut self.prepared);
+        self.prepared_bytes = 0;
         match flags {
             0 => return Pdu::ExecuteWriteRsp,
             1 => {}
@@ -591,6 +667,7 @@ fn is_request_opcode(o: u8) -> bool {
     matches!(
         o,
         opcode::MTU_REQ
+            | opcode::READ_MULTIPLE_REQ
             | opcode::FIND_INFO_REQ
             | opcode::FIND_BY_TYPE_VALUE_REQ
             | opcode::READ_BY_TYPE_REQ

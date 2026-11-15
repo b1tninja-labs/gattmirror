@@ -28,6 +28,10 @@ pub mod opcode {
     pub const READ_BLOB_REQ: u8 = 0x0C;
     /// Read Blob Response.
     pub const READ_BLOB_RSP: u8 = 0x0D;
+    /// Read Multiple Request.
+    pub const READ_MULTIPLE_REQ: u8 = 0x0E;
+    /// Read Multiple Response.
+    pub const READ_MULTIPLE_RSP: u8 = 0x0F;
     /// Read By Group Type Request.
     pub const READ_BY_GROUP_TYPE_REQ: u8 = 0x10;
     /// Read By Group Type Response.
@@ -237,6 +241,13 @@ pub enum Pdu {
     ReadBlobRsp {
         value: Vec<u8>,
     },
+    ReadMultipleReq {
+        handles: Vec<u16>,
+    },
+    /// The values, concatenated.
+    ReadMultipleRsp {
+        values: Vec<u8>,
+    },
     ReadByGroupTypeReq {
         start: u16,
         end: u16,
@@ -301,6 +312,7 @@ impl Pdu {
                 | Pdu::ReadByTypeReq { .. }
                 | Pdu::ReadReq { .. }
                 | Pdu::ReadBlobReq { .. }
+                | Pdu::ReadMultipleReq { .. }
                 | Pdu::ReadByGroupTypeReq { .. }
                 | Pdu::WriteReq { .. }
                 | Pdu::PrepareWriteReq { .. }
@@ -407,6 +419,16 @@ impl Pdu {
             Pdu::ReadBlobRsp { value } => {
                 o.push(op::READ_BLOB_RSP);
                 o.extend_from_slice(value);
+            }
+            Pdu::ReadMultipleReq { handles } => {
+                o.push(op::READ_MULTIPLE_REQ);
+                for h in handles {
+                    put16(&mut o, *h);
+                }
+            }
+            Pdu::ReadMultipleRsp { values } => {
+                o.push(op::READ_MULTIPLE_RSP);
+                o.extend_from_slice(values);
             }
             Pdu::ReadByGroupTypeReq {
                 start,
@@ -592,6 +614,15 @@ impl Pdu {
                 }
             }
             op::READ_BLOB_RSP => Pdu::ReadBlobRsp { value: p.to_vec() },
+            op::READ_MULTIPLE_REQ => {
+                if p.len() < 4 || p.len() % 2 != 0 {
+                    return Err(bad);
+                }
+                Pdu::ReadMultipleReq {
+                    handles: p.chunks(2).map(|c| u16_at(c, 0)).collect(),
+                }
+            }
+            op::READ_MULTIPLE_RSP => Pdu::ReadMultipleRsp { values: p.to_vec() },
             op::READ_BY_GROUP_TYPE_REQ => {
                 at_least(4)?;
                 let group_type = Uuid::from_le_bytes(&p[4..]).ok_or(bad)?;
@@ -765,6 +796,12 @@ mod tests {
                 offset: 22,
             },
             Pdu::ReadBlobRsp { value: vec![] },
+            Pdu::ReadMultipleReq {
+                handles: vec![1, 2],
+            },
+            Pdu::ReadMultipleRsp {
+                values: vec![1, 2, 3],
+            },
             Pdu::ReadByGroupTypeReq {
                 start: 1,
                 end: 9,
@@ -843,6 +880,14 @@ mod tests {
         assert_eq!(
             Pdu::decode(&[0x09, 4, 1, 0, 1]),
             Err(DecodeError::Malformed(0x09))
+        );
+        assert_eq!(
+            Pdu::decode(&[0x0E, 1, 0]),
+            Err(DecodeError::Malformed(0x0E))
+        );
+        assert_eq!(
+            Pdu::decode(&[0x0E, 1, 0, 2]),
+            Err(DecodeError::Malformed(0x0E))
         );
         assert_eq!(Pdu::decode(&[0x05, 3]), Err(DecodeError::Malformed(0x05)));
         assert_eq!(Pdu::decode(&[0xEE]), Err(DecodeError::UnknownOpcode(0xEE)));

@@ -54,6 +54,20 @@ impl Access {
     };
 }
 
+/// How well the link must be protected before an attribute may be accessed. The server is told the
+/// link's level with [`Server::set_link_level`](crate::Server::set_link_level); this crate never
+/// pairs or encrypts anything itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Level {
+    /// No protection needed.
+    #[default]
+    Open,
+    /// An encrypted link.
+    Encrypted,
+    /// An encrypted link whose key was authenticated.
+    Authenticated,
+}
+
 /// Where an attribute's value lives.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
@@ -90,6 +104,8 @@ pub struct Attribute {
     pub(crate) read: bool,
     pub(crate) write: bool,
     pub(crate) write_cmd: bool,
+    pub(crate) read_level: Level,
+    pub(crate) write_level: Level,
 }
 
 impl Attribute {
@@ -120,6 +136,8 @@ pub enum BuildError {
     HandleOverflow,
     /// `set_next_handle` asked for a handle below the next free one, or for 0.
     HandleNotAvailable,
+    /// `require` named a handle that is not in the table.
+    NoSuchHandle,
 }
 
 /// A GATT attribute table, sorted by handle.
@@ -229,6 +247,8 @@ impl DatabaseBuilder {
             read: true,
             write: false,
             write_cmd: false,
+            read_level: Level::Open,
+            write_level: Level::Open,
         });
         Ok(handle)
     }
@@ -259,6 +279,8 @@ impl DatabaseBuilder {
             read: true,
             write: false,
             write_cmd: false,
+            read_level: Level::Open,
+            write_level: Level::Open,
         });
         self.last_char = Some(self.attrs.len());
         self.attrs.push(Attribute {
@@ -269,6 +291,8 @@ impl DatabaseBuilder {
             read: props.contains(Props::READ),
             write: props.contains(Props::WRITE),
             write_cmd: props.contains(Props::WRITE_NO_RSP),
+            read_level: Level::Open,
+            write_level: Level::Open,
         });
         let mut allowed = 0;
         if props.contains(Props::NOTIFY) {
@@ -290,6 +314,8 @@ impl DatabaseBuilder {
                 read: true,
                 write: true,
                 write_cmd: false,
+                read_level: Level::Open,
+                write_level: Level::Open,
             });
         }
         self.close_group();
@@ -319,9 +345,32 @@ impl DatabaseBuilder {
             read: access.read,
             write: access.write,
             write_cmd: false,
+            read_level: Level::Open,
+            write_level: Level::Open,
         });
         self.close_group();
         Ok(h)
+    }
+
+    /// Require a protection level to read and to write the attribute at `handle`. A write
+    /// requirement covers Write Request, Write Command and Prepare Write alike.
+    ///
+    /// # Errors
+    /// [`BuildError::NoSuchHandle`].
+    pub fn require(
+        &mut self,
+        handle: u16,
+        read: Level,
+        write: Level,
+    ) -> Result<&mut Self, BuildError> {
+        let a = self
+            .attrs
+            .iter_mut()
+            .find(|a| a.handle == handle)
+            .ok_or(BuildError::NoSuchHandle)?;
+        a.read_level = read;
+        a.write_level = write;
+        Ok(self)
     }
 
     /// Record the open service's last handle.

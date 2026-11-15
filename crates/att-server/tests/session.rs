@@ -113,7 +113,7 @@ fn error(req: u8, handle: u16, code: ErrorCode) -> Pdu {
 }
 
 #[test]
-fn mtu_exchange_takes_the_smaller_and_is_allowed_once() {
+fn mtu_exchange_takes_the_smaller_and_a_repeat_recomputes_it() {
     let (mut s, _) = server();
     assert_eq!(s.mtu(), 23);
     assert_eq!(
@@ -121,11 +121,12 @@ fn mtu_exchange_takes_the_smaller_and_is_allowed_once() {
         Pdu::MtuRsp { mtu: 247 }
     );
     assert_eq!(s.mtu(), 185);
+    // Android and Bumble answer a repeat and recompute; so does this server.
     assert_eq!(
         rsp(&mut s, Pdu::MtuReq { mtu: 100 }),
-        error(0x02, 0, ErrorCode::RequestNotSupported)
+        Pdu::MtuRsp { mtu: 247 }
     );
-    assert_eq!(s.mtu(), 185);
+    assert_eq!(s.mtu(), 100);
 }
 
 #[test]
@@ -838,8 +839,8 @@ fn raw_bytes_in_and_out() {
     );
     // Unknown request opcode: Request Not Supported; unknown command: silence; empty: silence.
     assert_eq!(
-        s.handle_bytes(&[0x0E, 1, 0]),
-        Some(vec![0x01, 0x0E, 0, 0, 0x06])
+        s.handle_bytes(&[0x20, 1, 0]),
+        Some(vec![0x01, 0x20, 0, 0, 0x06])
     );
     assert_eq!(s.handle_bytes(&[0x52 | 0x80, 1, 0, 1]), None);
     assert_eq!(s.handle_bytes(&[]), None);
