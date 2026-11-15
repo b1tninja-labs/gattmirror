@@ -6,12 +6,19 @@
 //! second from another thread, and a writable one. It logs connections and what clients write.
 
 use std::net::TcpStream;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use att_server::{Backend, Database, ErrorCode, Props, Server, Subscription, Uuid, Value};
-use le_host::{AdvParams, Advertisement, Controller, Peripheral, ServiceUuid};
+use le_host::{
+    AdvParams, Advertisement, Controller, Handle, NotifyPolicy, Peripheral, ServiceUuid,
+};
 
-struct Log;
+/// Answers every write on the serial characteristic with an ELM327-style reply notification.
+struct Log {
+    notify_handle: u16,
+    to_peer: Arc<Mutex<Option<Handle>>>,
+}
 
 impl Backend for Log {
     fn read(&mut self, handle: u16) -> Result<Vec<u8>, ErrorCode> {
@@ -20,6 +27,14 @@ impl Backend for Log {
     }
     fn write(&mut self, handle: u16, value: &[u8], with_response: bool) -> Result<(), ErrorCode> {
         println!("write {handle:#06x} rsp={with_response} {value:02x?}");
+        let reply: &[u8] = if value.starts_with(b"ATZ") {
+            b"\r\rELM327 v1.5\r\r>"
+        } else {
+            b"OK\r\r>"
+        };
+        if let Some(h) = self.to_peer.lock().unwrap().as_ref() {
+            h.notify(self.notify_handle, reply);
+        }
         Ok(())
     }
     fn subscription_changed(&mut self, handle: u16, s: Subscription) {
@@ -53,7 +68,15 @@ fn main() {
         Value::Dynamic,
     )
     .unwrap();
-    let server = Server::new(b.build(), Log, 247);
+    let to_peer = Arc::new(Mutex::new(None));
+    let server = Server::new(
+        b.build(),
+        Log {
+            notify_handle: notify,
+            to_peer: Arc::clone(&to_peer),
+        },
+        247,
+    );
 
     let stream = TcpStream::connect(addr).expect("connect");
     stream
@@ -64,15 +87,12 @@ fn main() {
     let ad = Advertisement::new(&name, Some(ServiceUuid::Uuid16(0xFFF0))).expect("advertisement");
     let (mut p, handle) = Peripheral::new(ctl, info, ad, AdvParams::default(), server);
 
+    *to_peer.lock().unwrap() = Some(handle.clone());
+    p.set_notify_policy(NotifyPolicy::Always);
+    p.set_trace(Box::new(|d, cid, b| println!("{d:?} cid {cid}: {b:02x?}")));
     let h = handle.clone();
     std::thread::spawn(move || {
-        let start = Instant::now();
-        let mut n = 0u8;
-        while start.elapsed() < Duration::from_secs(secs) {
-            std::thread::sleep(Duration::from_secs(1));
-            h.notify(notify, &[n]);
-            n = n.wrapping_add(1);
-        }
+        std::thread::sleep(Duration::from_secs(secs));
         h.stop();
     });
     println!("serving {name:?} for {secs} s");

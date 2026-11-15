@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 
-use att_server::{Backend, Server};
+use att_server::{Backend, Pdu, Server};
 use hci_wire::{EventCode, Packet, opcodes};
 
 use crate::advertising::{AdvParams, Advertisement};
@@ -73,6 +73,31 @@ impl Handle {
     }
 }
 
+/// When a queued notification is sent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NotifyPolicy {
+    /// Only to a client that wrote the characteristic's Client Characteristic Configuration.
+    #[default]
+    RequireSubscription,
+    /// Whenever a client is connected, subscribed or not. Some client apps call only the local
+    /// `setCharacteristicNotification` and never write the descriptor (observed live with the
+    /// Voltage app), relying on the peripheral to notify anyway. Indications still need a
+    /// subscription.
+    Always,
+}
+
+/// Which way a traced L2CAP frame went.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Direction {
+    /// From the peer to this host.
+    In,
+    /// From this host to the peer.
+    Out,
+}
+
+/// A callback told of every L2CAP frame: direction, channel id, payload.
+pub type Trace = Box<dyn FnMut(Direction, u16, &[u8]) + Send>;
+
 struct Conn {
     handle: u16,
     reasm: Reassembler,
@@ -92,6 +117,8 @@ pub struct Peripheral<T: Read + Write, B: Backend> {
     connections: usize,
     dropped: usize,
     stopping: bool,
+    trace: Option<Trace>,
+    policy: NotifyPolicy,
 }
 
 impl<T: Read + Write, B: Backend> Peripheral<T, B> {
@@ -119,6 +146,8 @@ impl<T: Read + Write, B: Backend> Peripheral<T, B> {
                 connections: 0,
                 dropped: 0,
                 stopping: false,
+                trace: None,
+                policy: NotifyPolicy::default(),
             },
             Handle { tx },
         )
@@ -157,6 +186,16 @@ impl<T: Read + Write, B: Backend> Peripheral<T, B> {
                 return self.ctl.stop_advertising();
             }
         }
+    }
+
+    /// Report every L2CAP frame, in and out, to `f` (for debugging and live comparison).
+    pub fn set_trace(&mut self, f: Trace) {
+        self.trace = Some(f);
+    }
+
+    /// Choose when notifications are sent; see [`NotifyPolicy`].
+    pub fn set_notify_policy(&mut self, policy: NotifyPolicy) {
+        self.policy = policy;
     }
 
     /// The server, for inspection.
@@ -277,6 +316,9 @@ impl<T: Read + Write, B: Backend> Peripheral<T, B> {
     }
 
     fn on_frame(&mut self, cid: u16, payload: &[u8]) {
+        if let Some(t) = self.trace.as_mut() {
+            t(Direction::In, cid, payload);
+        }
         let reply = match cid {
             CID_ATT => self.server.handle_bytes(payload),
             CID_SIGNALLING => l2cap::signalling_reply(payload),
@@ -290,6 +332,9 @@ impl<T: Read + Write, B: Backend> Peripheral<T, B> {
 
     fn enqueue(&mut self, cid: u16, payload: &[u8]) {
         let Some(conn) = &self.conn else { return };
+        if let Some(t) = self.trace.as_mut() {
+            t(Direction::Out, cid, payload);
+        }
         let max = usize::from(self.info.le_acl_len.max(1));
         self.tx_queue
             .extend(l2cap::fragment(conn.handle, cid, payload, max));
@@ -304,10 +349,12 @@ impl<T: Read + Write, B: Backend> Peripheral<T, B> {
                     value,
                     indicate,
                 }) => {
-                    // With no client the subscriptions are empty, so the server refuses these.
                     let queued = if indicate {
                         self.server.indicate(handle, &value).is_ok()
+                    } else if self.policy == NotifyPolicy::Always {
+                        self.notify_unconditionally(handle, value)
                     } else {
+                        // With no client the subscriptions are empty, so the server refuses.
                         self.server.notify(handle, &value).is_ok()
                     };
                     if !queued {
@@ -323,6 +370,17 @@ impl<T: Read + Write, B: Backend> Peripheral<T, B> {
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => return Ok(false),
             }
         }
+    }
+
+    /// Send a notification without consulting the client's subscription. Only to a connected
+    /// client, only for a handle in the table, cut to the MTU.
+    fn notify_unconditionally(&mut self, handle: u16, mut value: Vec<u8>) -> bool {
+        if self.conn.is_none() || self.server.database().get(handle).is_none() {
+            return false;
+        }
+        value.truncate(usize::from(self.server.mtu()) - 3);
+        self.enqueue(CID_ATT, &Pdu::Notification { handle, value }.encode());
+        true
     }
 
     fn disconnect(&mut self, handle: u16) -> Result<(), Error> {
@@ -356,7 +414,7 @@ mod tests {
     use att_server::{Database, NoBackend, Pdu, Props, Server, Subscription, Uuid, Value};
     use hci_wire::{Packet, PacketBoundary, opcodes};
 
-    use super::{Handle, Peripheral};
+    use super::{Direction, Handle, NotifyPolicy, Peripheral};
     use crate::advertising::{AdvParams, Advertisement};
     use crate::controller::{Controller, ControllerInfo};
     use crate::fake::Fake;
@@ -757,5 +815,81 @@ mod tests {
         let last = log.last().unwrap();
         assert_eq!(last.0, opcodes::LE_SET_ADVERTISING_ENABLE);
         assert_eq!(last.1, [0]);
+    }
+
+    #[test]
+    fn the_always_policy_notifies_a_client_that_never_subscribed() {
+        let (mut p, h, t) = rig(20, |f, _| f.push_inbound(conn_event(0, H)));
+        p.set_notify_policy(NotifyPolicy::Always);
+        h.notify(t.notify, b"hi");
+        let fake = run(&mut p, &h);
+        assert_eq!(
+            att(&fake),
+            [Pdu::Notification {
+                handle: t.notify,
+                value: b"hi".to_vec()
+            }]
+        );
+        assert_eq!(p.dropped_updates(), 0);
+    }
+
+    #[test]
+    fn the_always_policy_still_needs_a_connection_and_a_real_handle() {
+        let (mut p, h, t) = rig(20, |_, _| {});
+        p.set_notify_policy(NotifyPolicy::Always);
+        h.notify(t.notify, b"x");
+        let fake = run(&mut p, &h);
+        assert_eq!(fake.acl_out().len(), 0);
+        let (mut p, h, _) = rig(20, |f, _| f.push_inbound(conn_event(0, H)));
+        p.set_notify_policy(NotifyPolicy::Always);
+        h.notify(0x0F00, b"x");
+        let fake = run(&mut p, &h);
+        assert_eq!(fake.acl_out().len(), 0);
+        assert_eq!(p.dropped_updates(), 1);
+    }
+
+    #[test]
+    fn the_always_policy_cuts_to_the_mtu_and_leaves_indications_alone() {
+        let (mut p, h, t) = rig(20, |f, _| f.push_inbound(conn_event(0, H)));
+        p.set_notify_policy(NotifyPolicy::Always);
+        h.notify(t.notify, &[7; 100]);
+        h.indicate(t.notify, b"i");
+        let fake = run(&mut p, &h);
+        let a = att(&fake);
+        // The default MTU is 23: 20 bytes of value. The unsubscribed indication is refused.
+        assert_eq!(
+            a,
+            [Pdu::Notification {
+                handle: t.notify,
+                value: vec![7; 20]
+            }]
+        );
+        assert_eq!(p.dropped_updates(), 1);
+    }
+
+    #[test]
+    fn the_trace_sees_frames_in_both_directions() {
+        use std::sync::{Arc, Mutex};
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let (mut p, h, t) = rig(20, |f, t| {
+            f.push_inbound(conn_event(0, H));
+            f.push_inbound(acl(H, CID_ATT, &Pdu::ReadReq { handle: t.name }.encode()));
+        });
+        let s2 = Arc::clone(&seen);
+        p.set_trace(Box::new(move |d, cid, b| {
+            s2.lock().unwrap().push((d, cid, b.to_vec()));
+        }));
+        run(&mut p, &h);
+        let seen = seen.lock().unwrap();
+        assert_eq!(
+            seen[0],
+            (
+                Direction::In,
+                CID_ATT,
+                Pdu::ReadReq { handle: t.name }.encode()
+            )
+        );
+        assert_eq!(seen[1].0, Direction::Out);
+        assert_eq!(seen.len(), 2);
     }
 }
