@@ -18,5 +18,5 @@ pub mod sim;
 pub mod table;
 
 pub use backend::{Backend, BackendError, CharId, Notification, characteristics};
-pub use mirror::Mirror;
+pub use mirror::{Mirror, NotifyPolicy, Pump, Relay};
 pub use table::{MirrorError, Table, apply_name, build_database};

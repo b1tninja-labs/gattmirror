@@ -66,14 +66,110 @@ impl<B: Backend> att_server::Backend for Relay<B> {
     }
 }
 
-/// One guest connection's mirror: the ATT server plus the pump that turns the adapter's
-/// notifications into queued ATT notifications.
+/// Who gets the adapter's notifications.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NotifyPolicy {
+    /// Only a guest that enabled notify (or indicate) on the characteristic's CCCD.
+    #[default]
+    Subscribed,
+    /// Any connected guest, whether or not it wrote the CCCD, as a notification. For guests that
+    /// never subscribe; indications still need a subscription and are only sent via the server.
+    Always,
+}
+
+/// Moves the adapter's notifications to the guest: splits them to `MTU - 3` and queues or returns
+/// them as ATT PDUs. Separate from [`Mirror`] so a transport that owns the
+/// [`Server`] (such as a BLE host loop) can run it with `&mut Server` on every pass.
 #[derive(Debug)]
-pub struct Mirror<B> {
-    server: Server<Relay<B>>,
+pub struct Pump {
     rx: Receiver<Notification>,
     value_handles: Vec<u16>,
     dropped: usize,
+    policy: NotifyPolicy,
+}
+
+impl Pump {
+    /// Choose who receives notifications.
+    pub fn set_policy(&mut self, policy: NotifyPolicy) {
+        self.policy = policy;
+    }
+
+    /// Notifications that were discarded: unknown characteristic, or no subscription under
+    /// [`NotifyPolicy::Subscribed`].
+    #[must_use]
+    pub fn dropped(&self) -> usize {
+        self.dropped
+    }
+
+    /// The value handle the guest sees for `ch`.
+    #[must_use]
+    pub fn value_handle(&self, ch: CharId) -> Option<u16> {
+        self.value_handles.get(ch.0).copied()
+    }
+
+    /// Queue every pending notification on `server` (policy [`NotifyPolicy::Subscribed`] only; the
+    /// server queues only for subscribed characteristics). A value longer than the MTU allows is
+    /// split into ordered pieces of `MTU - 3` bytes, using the MTU in force now.
+    pub fn pump<S: att_server::Backend>(&mut self, server: &mut Server<S>) {
+        while let Ok(n) = self.rx.try_recv() {
+            let Some(&handle) = self.value_handles.get(n.char.0) else {
+                self.dropped += 1;
+                continue;
+            };
+            let sub = server.subscription(handle);
+            if !sub.notify && !sub.indicate {
+                self.dropped += 1;
+                continue;
+            }
+            let payload = usize::from(server.mtu()).saturating_sub(3).max(1);
+            for piece in n.value.chunks(payload) {
+                let queued = if sub.notify {
+                    server.notify(handle, piece)
+                } else {
+                    server.indicate(handle, piece)
+                };
+                if queued.is_err() {
+                    self.dropped += 1;
+                }
+            }
+        }
+    }
+
+    /// Every PDU ready to send now. Under [`NotifyPolicy::Subscribed`] this is [`Pump::pump`]
+    /// followed by draining the server's queue. Under [`NotifyPolicy::Always`] each pending
+    /// notification becomes ordered `MTU - 3` notification PDUs directly, followed by whatever the
+    /// server had queued.
+    pub fn drain<S: att_server::Backend>(&mut self, server: &mut Server<S>) -> Vec<Pdu> {
+        let mut out = Vec::new();
+        match self.policy {
+            NotifyPolicy::Subscribed => self.pump(server),
+            NotifyPolicy::Always => {
+                while let Ok(n) = self.rx.try_recv() {
+                    let Some(&handle) = self.value_handles.get(n.char.0) else {
+                        self.dropped += 1;
+                        continue;
+                    };
+                    let payload = usize::from(server.mtu()).saturating_sub(3).max(1);
+                    for piece in n.value.chunks(payload) {
+                        out.push(Pdu::Notification {
+                            handle,
+                            value: piece.to_vec(),
+                        });
+                    }
+                }
+            }
+        }
+        out.extend(std::iter::from_fn(|| server.poll_outgoing()));
+        out
+    }
+}
+
+/// One guest connection's mirror: the ATT server plus the pump that turns the adapter's
+/// notifications into ATT notifications.
+#[derive(Debug)]
+pub struct Mirror<B> {
+    server: Server<Relay<B>>,
+    pump: Pump,
 }
 
 impl<B: Backend> Mirror<B> {
@@ -93,10 +189,20 @@ impl<B: Backend> Mirror<B> {
         };
         Ok(Mirror {
             server: Server::new(table.database, relay, max_mtu),
-            rx,
-            value_handles: table.value_handles,
-            dropped: 0,
+            pump: Pump {
+                rx,
+                value_handles: table.value_handles,
+                dropped: 0,
+                policy: NotifyPolicy::Subscribed,
+            },
         })
+    }
+
+    /// Split into the ATT server and the notification pump, for a host loop that owns the server:
+    /// give it the server, and call `pump.drain(server)` once per pass.
+    #[must_use]
+    pub fn into_parts(self) -> (Server<Relay<B>>, Pump) {
+        (self.server, self.pump)
     }
 
     /// The ATT server, for inspection.
@@ -109,16 +215,21 @@ impl<B: Backend> Mirror<B> {
         self.server.backend().backend()
     }
 
+    /// Choose who receives notifications.
+    pub fn set_policy(&mut self, policy: NotifyPolicy) {
+        self.pump.set_policy(policy);
+    }
+
     /// The value handle the guest sees for `ch`.
     #[must_use]
     pub fn value_handle(&self, ch: CharId) -> Option<u16> {
-        self.value_handles.get(ch.0).copied()
+        self.pump.value_handle(ch)
     }
 
-    /// Notifications that arrived while the guest was not subscribed, and so were discarded.
+    /// Notifications that were discarded.
     #[must_use]
     pub fn dropped(&self) -> usize {
-        self.dropped
+        self.pump.dropped()
     }
 
     /// Answer one ATT PDU from the guest.
@@ -131,32 +242,9 @@ impl<B: Backend> Mirror<B> {
         self.server.reset();
     }
 
-    /// Move every notification the adapter has sent onto the server's queue. A value longer than
-    /// the MTU allows is split into pieces of `MTU - 3` bytes, sent in order, using the MTU in
-    /// force now. A notification for a characteristic the guest has not subscribed to is dropped.
+    /// Move every notification the adapter has sent onto the server's queue; see [`Pump::pump`].
     pub fn pump(&mut self) {
-        while let Ok(n) = self.rx.try_recv() {
-            let Some(&handle) = self.value_handles.get(n.char.0) else {
-                self.dropped += 1;
-                continue;
-            };
-            let sub = self.server.subscription(handle);
-            if !sub.notify && !sub.indicate {
-                self.dropped += 1;
-                continue;
-            }
-            let payload = usize::from(self.server.mtu()).saturating_sub(3).max(1);
-            for piece in n.value.chunks(payload) {
-                let queued = if sub.notify {
-                    self.server.notify(handle, piece)
-                } else {
-                    self.server.indicate(handle, piece)
-                };
-                if queued.is_err() {
-                    self.dropped += 1;
-                }
-            }
-        }
+        self.pump.pump(&mut self.server);
     }
 
     /// The next PDU to send to the guest, after pumping the adapter's notifications.
@@ -165,10 +253,9 @@ impl<B: Backend> Mirror<B> {
         self.server.poll_outgoing()
     }
 
-    /// Every PDU currently ready to send to the guest.
+    /// Every PDU currently ready to send to the guest; see [`Pump::drain`].
     pub fn drain_outgoing(&mut self) -> Vec<Pdu> {
-        self.pump();
-        std::iter::from_fn(|| self.server.poll_outgoing()).collect()
+        self.pump.drain(&mut self.server)
     }
 }
 
