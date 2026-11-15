@@ -1,0 +1,24 @@
+[package]
+name = "winrt-gatt"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Windows Bluetooth LE GATT client: scan, connect, discover a full table, read, write, subscribe"
+publish = false
+
+[lints]
+workspace = true
+
+# Microsoft's first-party `windows` crate (WinRT projections), Windows targets only. No async runtime:
+# WinRT async operations are driven with `IAsyncOperation::get()` on the calling thread, as in obd-bridge.
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58"
+features = [
+    "Foundation",
+    "Foundation_Collections",
+    "Devices_Bluetooth",
+    "Devices_Bluetooth_Advertisement",
+    "Devices_Bluetooth_GenericAttributeProfile",
+    "Storage_Streams",
+]
