@@ -78,6 +78,10 @@ pub trait Backend {
     /// [`BackendError`] when the subscription could not be changed.
     fn set_notify(&mut self, ch: CharId, enabled: bool) -> Result<(), BackendError>;
 
+    /// The guest connected or disconnected: drop any per-connection state, such as a partly
+    /// received command. The default does nothing.
+    fn reset_connection(&mut self) {}
+
     /// The channel notifications arrive on. Yields the receiver once; later calls give `None`.
     fn notifications(&mut self) -> Option<Receiver<Notification>>;
 }

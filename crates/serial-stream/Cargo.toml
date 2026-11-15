@@ -1,0 +1,11 @@
+[package]
+name = "serial-stream"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ByteStream: the byte-stream currency between mirror frontends and backends, with in-memory and TCP implementations"
+publish = false
+
+[lints]
+workspace = true

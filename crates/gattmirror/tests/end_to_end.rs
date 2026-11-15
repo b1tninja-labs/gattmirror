@@ -259,3 +259,43 @@ fn the_notification_channel_can_be_taken_once() {
     assert!(a.notifications().is_some());
     assert!(Mirror::new(a, 23).is_err());
 }
+
+#[test]
+fn a_host_loop_that_owns_the_server_drains_through_the_pump_without_a_subscription() {
+    use gattmirror::NotifyPolicy;
+    let mut mirror = Mirror::new(SimAdapter::new(), 247).unwrap();
+    mirror.set_policy(NotifyPolicy::Always);
+    let (tx, rx) = (
+        mirror.value_handle(CharId(1)).unwrap(),
+        mirror.value_handle(CharId(2)).unwrap(),
+    );
+    let (mut server, mut pump) = mirror.into_parts();
+    // The guest never writes the CCCD and never exchanges an MTU.
+    server.handle(&Pdu::WriteReq {
+        handle: rx,
+        value: b"ATZ\r".to_vec(),
+    });
+    let pdus = pump.drain(&mut server);
+    let lens: Vec<usize> = pdus
+        .iter()
+        .map(|p| match p {
+            Pdu::Notification { handle, value } if *handle == tx => value.len(),
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect();
+    assert_eq!(lens, [20, 2]);
+    assert_eq!(pump.dropped(), 0);
+}
+
+#[test]
+fn the_default_policy_drops_notifications_for_a_guest_that_never_subscribed() {
+    let mirror = Mirror::new(SimAdapter::new(), 247).unwrap();
+    let rx = mirror.value_handle(CharId(2)).unwrap();
+    let (mut server, mut pump) = mirror.into_parts();
+    server.handle(&Pdu::WriteReq {
+        handle: rx,
+        value: b"ATI\r".to_vec(),
+    });
+    assert_eq!(pump.drain(&mut server), Vec::<Pdu>::new());
+    assert_eq!(pump.dropped(), 1);
+}
