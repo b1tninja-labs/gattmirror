@@ -5,3 +5,10 @@ version = 4
 [[package]]
 name = "hci-wire"
 version = "0.1.0"
+
+[[package]]
+name = "le-host"
+version = "0.1.0"
+dependencies = [
+ "hci-wire",
+]

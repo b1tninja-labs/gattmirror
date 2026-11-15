@@ -1,0 +1,14 @@
+[package]
+name = "le-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "LE peripheral host over HCI: controller initialisation and advertising"
+publish = false
+
+[dependencies]
+hci-wire = { path = "../hci-wire" }
+
+[lints]
+workspace = true

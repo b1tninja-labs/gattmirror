@@ -38,7 +38,7 @@ Status:
 |---|---|---|
 | `hci-wire` | H4 framing, HCI packets, typed events | [crates/hci-wire/ROADMAP.md](crates/hci-wire/ROADMAP.md) |
 | `att-server` | ATT PDUs and the GATT attribute database | not started |
-| `le-host` | LE peripheral host over HCI: advertise, connect, L2CAP | not started |
+| `le-host` | LE peripheral host over HCI: advertise, connect, L2CAP | [crates/le-host/ROADMAP.md](crates/le-host/ROADMAP.md) (advertising slice) |
 | `gatt-profile` | text snapshot of a GATT table | not started |
 | `winrt-gatt` | Windows GATT client toward the real adapter | not started |
 | `gattmirror` | the relay binary | not started |

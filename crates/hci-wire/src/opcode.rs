@@ -53,6 +53,16 @@ pub mod opcodes {
     pub const LE_READ_BUFFER_SIZE: Opcode = Opcode::new(0x08, 0x002);
     /// LE Set Advertising Enable (LE group `0x08`, command `0x00A`).
     pub const LE_SET_ADVERTISING_ENABLE: Opcode = Opcode::new(0x08, 0x00A);
+    /// Set Event Mask (controller and baseband group `0x03`, command `0x001`). `[unread]`
+    pub const SET_EVENT_MASK: Opcode = Opcode::new(0x03, 0x001);
+    /// LE Set Event Mask (LE group `0x08`, command `0x001`). `[unread]`
+    pub const LE_SET_EVENT_MASK: Opcode = Opcode::new(0x08, 0x001);
+    /// LE Set Advertising Parameters (LE group `0x08`, command `0x006`). `[unread]`
+    pub const LE_SET_ADVERTISING_PARAMETERS: Opcode = Opcode::new(0x08, 0x006);
+    /// LE Set Advertising Data (LE group `0x08`, command `0x008`). `[unread]`
+    pub const LE_SET_ADVERTISING_DATA: Opcode = Opcode::new(0x08, 0x008);
+    /// LE Set Scan Response Data (LE group `0x08`, command `0x009`). `[unread]`
+    pub const LE_SET_SCAN_RESPONSE_DATA: Opcode = Opcode::new(0x08, 0x009);
 }
 
 #[cfg(test)]
@@ -73,6 +83,17 @@ mod tests {
         assert_eq!(opcodes::READ_BD_ADDR.0, 0x1009);
         assert_eq!(opcodes::LE_READ_BUFFER_SIZE.0, 0x2002);
         assert_eq!(opcodes::LE_SET_ADVERTISING_ENABLE.0, 0x200A);
+    }
+
+    /// Accepted by a live controller (Command Complete status 0) in `le-host`'s live test; the
+    /// numbers themselves are not read from the specification.
+    #[test]
+    fn advertising_opcodes_have_the_values_a_controller_accepted() {
+        assert_eq!(opcodes::SET_EVENT_MASK.0, 0x0C01);
+        assert_eq!(opcodes::LE_SET_EVENT_MASK.0, 0x2001);
+        assert_eq!(opcodes::LE_SET_ADVERTISING_PARAMETERS.0, 0x2006);
+        assert_eq!(opcodes::LE_SET_ADVERTISING_DATA.0, 0x2008);
+        assert_eq!(opcodes::LE_SET_SCAN_RESPONSE_DATA.0, 0x2009);
     }
 
     #[test]
