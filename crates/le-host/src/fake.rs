@@ -19,6 +19,9 @@ pub struct Fake {
     credit_delivered_at_second_command: Option<bool>,
     inject: Option<Vec<u8>>,
     silent: bool,
+    block_when_idle: bool,
+    auto_complete: bool,
+    acl_out: Vec<Packet>,
 }
 
 fn complete(num: u8, op: Opcode, ret: &[u8]) -> Vec<u8> {
@@ -40,6 +43,22 @@ impl Fake {
     }
     pub fn inject_before_next_answer(&mut self, bytes: Vec<u8>) {
         self.inject = Some(bytes);
+    }
+    /// Queue raw H4 bytes for the host to read.
+    pub fn push_inbound(&mut self, bytes: Vec<u8>) {
+        self.out.push_back(bytes);
+    }
+    /// Report an empty queue as a timeout rather than end of stream.
+    pub fn block_when_idle(&mut self) {
+        self.block_when_idle = true;
+    }
+    /// Answer each ACL packet the host writes with a Number Of Completed Packets event.
+    pub fn complete_acl_automatically(&mut self) {
+        self.auto_complete = true;
+    }
+    /// ACL packets the host has written.
+    pub fn acl_out(&self) -> &[Packet] {
+        &self.acl_out
     }
     pub fn go_silent(&mut self) {
         self.silent = true;
@@ -71,6 +90,13 @@ impl Fake {
             );
             return;
         }
+        if op == opcodes::DISCONNECT {
+            let mut params = vec![0, 1];
+            params.extend_from_slice(&op.0.to_le_bytes());
+            self.out
+                .push_back(Packet::Event { code: 0x0F, params }.encode());
+            return;
+        }
         let status = self
             .refuse
             .iter()
@@ -99,10 +125,20 @@ impl Write for Fake {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.decoder.push(buf);
         while let Some(p) = self.decoder.next_packet().expect("host framing") {
-            let Packet::Command { opcode, params } = p else {
-                panic!("host sent a non-command")
-            };
-            self.handle(opcode, params);
+            match p {
+                Packet::Command { opcode, params } => self.handle(opcode, params),
+                Packet::Acl { handle, .. } => {
+                    if self.auto_complete {
+                        let mut params = vec![1];
+                        params.extend_from_slice(&handle.to_le_bytes());
+                        params.extend_from_slice(&1u16.to_le_bytes());
+                        self.out
+                            .push_back(Packet::Event { code: 0x13, params }.encode());
+                    }
+                    self.acl_out.push(p);
+                }
+                _ => panic!("host sent a packet the fake does not know"),
+            }
         }
         Ok(buf.len())
     }
@@ -114,6 +150,9 @@ impl Write for Fake {
 impl Read for Fake {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let Some(p) = self.out.pop_front() else {
+            if self.block_when_idle {
+                return Err(io::ErrorKind::WouldBlock.into());
+            }
             return Ok(0);
         };
         // A Command Complete for opcode 0 is the credit grant.
