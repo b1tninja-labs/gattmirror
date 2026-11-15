@@ -13,6 +13,7 @@
 pub mod backend;
 pub mod cli;
 pub mod mirror;
+pub mod serial;
 pub mod sim;
 pub mod table;
 

@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 att-server = { path = "../att-server" }
 gatt-profile = { path = "../gatt-profile" }
+serial-stream = { path = "../serial-stream" }
 
 [lints]
 workspace = true
