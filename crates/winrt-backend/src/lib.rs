@@ -8,6 +8,9 @@
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
+pub mod stream;
+pub use stream::{GattStream, ReconnectHook, SerialOptions};
+
 use gatt_profile::Profile;
 use gattmirror::{Backend, BackendError, CharId, Notification};
 use winrt_gatt::adapter::{Adapter, Connector};

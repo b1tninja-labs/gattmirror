@@ -207,6 +207,7 @@ version = "0.1.0"
 dependencies = [
  "gatt-profile",
  "gattmirror",
+ "serial-stream",
  "winrt-gatt",
 ]
 

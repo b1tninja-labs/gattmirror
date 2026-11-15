@@ -507,7 +507,7 @@ impl crate::adapter::Transport for WinrtClient {
     }
 
     fn write(&mut self, handle: u16, data: &[u8], mode: WriteMode) -> Result<(), Error> {
-        Self::write_chunked(self, handle, data, mode)
+        Self::write(self, handle, data, mode)
     }
 
     fn subscribe(&mut self, handle: u16) -> Result<(), Error> {
@@ -520,6 +520,10 @@ impl crate::adapter::Transport for WinrtClient {
 
     fn is_connected(&self) -> bool {
         Self::is_connected(self)
+    }
+
+    fn max_payload(&self) -> usize {
+        Self::max_payload(self)
     }
 }
 
