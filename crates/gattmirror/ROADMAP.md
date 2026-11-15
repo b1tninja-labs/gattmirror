@@ -1,0 +1,28 @@
+# gattmirror roadmap
+
+The binary and its library: a `Backend` trait for the real-adapter side, a profile-to-attribute-database builder,
+relay glue over `att-server`, a simulated adapter (`sim`, a test dummy) and a CLI. It is transport only: it parses no
+OBD, ELM327 or UDS, and the `sim` module's canned `AT` replies exist to exercise the relay, not to mirror anything.
+
+The Bluetooth Core Specification was not available (see the root `ROADMAP.md`, Wave 0), so every row that depends on
+what the specification defines is `[unread]`. `[ok]` is for properties of this crate's own bookkeeping, each broken
+once (the code changed, the named test watched to fail, the change reverted). Anchor "none" means no standard defines
+it.
+
+| Status | Obligation | Anchor | Test |
+|---|---|---|---|
+| [ok] | The built table has the same handles and attribute types as `Profile::attributes()` for the FFF0 fixture, so the guest sees the real device's layout | none: this crate's mapping | `src/table.rs::handles_match_the_flattened_profile`; broken by not skipping a profile's own CCCD descriptor (1 failed) |
+| [ok] | A characteristic's value handle is recoverable from its `CharId` and back | none | `src/table.rs::value_handles_follow_char_ids` |
+| [ok] | A read-only characteristic with a captured value is served from the table; any other characteristic value is dynamic, so a live value is never frozen | none | `src/table.rs::a_captured_value_on_a_live_characteristic_stays_dynamic`, `tests/end_to_end.rs::the_captured_device_name_is_served_without_touching_the_adapter`; broken by making every captured value static (1 failed) |
+| [ok] | A guest write reaches `Backend::write` with the response flag intact, for both Write Request and Write Command | none | `tests/end_to_end.rs::a_write_reaches_the_adapter_and_its_reply_comes_back_as_notifications`, `a_write_command_is_relayed_without_a_response`; broken by relaying an empty value (3 failed) |
+| [ok] | A guest read of a dynamic characteristic reaches `Backend::read`, and backend errors map to ATT errors (not readable, not writable, other, unknown handle) | none: this crate's mapping | `src/mirror.rs::tests::backend_errors_become_the_matching_att_errors`, `a_handle_that_is_no_characteristic_is_invalid`; broken by swapping the two mapping functions and by remapping Not Writable (1 failed each) |
+| [ok] | Enabling or disabling notify or indicate on a CCCD calls `Backend::set_notify`; without it the adapter never starts sending | none | `tests/end_to_end.rs::a_write_reaches_the_adapter_and_its_reply_comes_back_as_notifications`, `unsubscribing_is_passed_to_the_adapter_and_stops_delivery`; broken by always passing false (2 failed) |
+| [ok] | A backend notification becomes a queued ATT notification (or an indication when only that is enabled) on the subscribed characteristic; a value longer than MTU - 3 is split into ordered pieces; a notification for an unsubscribed characteristic is dropped and counted | none: relay policy over `att-server`'s queue | `tests/end_to_end.rs::replies_longer_than_the_mtu_are_split_in_order`, `nothing_is_delivered_to_a_guest_that_has_not_subscribed`; broken by splitting at the MTU instead of MTU - 3 (1 failed) and by inverting the notify/indicate choice (3 failed) |
+| [ok] | The notification channel is single-consumer: a second `Mirror` over the same backend is refused | none | `tests/end_to_end.rs::the_notification_channel_can_be_taken_once` |
+| [ok] | The mirrored table answers GATT discovery (primary services, characteristic declarations, descriptors) end to end through wire bytes | none: composition of `att-server` and the builder | `tests/end_to_end.rs::discovery_shows_the_mirrored_table`; the underlying encodings are `[unread]` in `att-server` |
+| [ok] | `sim`: replies to `\r`-terminated ASCII `AT` lines are byte-exact for echo, `ATI`, `ATRV`, `ATDPN`, `ATZ` (blank line first), `ATE0` (takes effect after its own echo), `ATL0`, `ST*` and unknown lines; a command may span several writes | none: behaviour ported from a Python dummy | `src/sim.rs::tests::*`, `tests/end_to_end.rs::a_command_split_across_writes_is_one_command`; broken by dropping the ATZ blank line, forcing echo on and splitting lines on `\n` (1, 1 and 4 failed) |
+| [ok] | CLI: `--simulate` xor `--profile <file>`, `--hci host:port` with a numeric port, `--name`, `--help`; unknown, repeated and valueless options are refused | none | `src/cli.rs::tests::*`; broken by accepting an empty host and by accepting both sources (1 failed each) |
+| [open] | `--profile <file>` has a real-adapter backend | none | none: `winrt-gatt` has no `Backend` implementation wired in; `cli::run` returns `NoAdapterBackend` |
+| [open] | The serving loop: open the `--hci` transport, advertise, accept a connection, carry ATT PDUs both ways between the virtual controller and `Mirror::handle_bytes` / `poll_outgoing`, call `Mirror::reset` on disconnect | Bluetooth Core Specification, unread | none: `cli::run` is a documented stub that builds the table and returns `ServingNotWired` until `le-host`'s connection API lands |
+| [open] | The MTU the guest negotiates is the MTU the real link allows, and notification splitting follows a later MTU change | Bluetooth Core Specification, unread | none: `Mirror::pump` splits with the MTU in force when the notification is pumped |
+| [open] | Descriptor values that are live (not captured) are read from the adapter | none | none: descriptors are served read-only as captured; only characteristic values are relayed |

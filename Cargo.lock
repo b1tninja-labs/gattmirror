@@ -11,6 +11,14 @@ name = "gatt-profile"
 version = "0.1.0"
 
 [[package]]
+name = "gattmirror"
+version = "0.1.0"
+dependencies = [
+ "att-server",
+ "gatt-profile",
+]
+
+[[package]]
 name = "hci-wire"
 version = "0.1.0"
 
