@@ -91,6 +91,19 @@ pub enum NotifyPolicy {
 /// otherwise. For a backend whose data arrives asynchronously.
 pub type Source<B> = Box<dyn FnMut(&mut Server<B>) -> Vec<Pdu> + Send>;
 
+/// A change of link state, reported to the [`LinkHook`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkEvent {
+    /// A client connected; the server has just been reset.
+    Connected,
+    /// The client went away; the server has just been reset.
+    Disconnected,
+}
+
+/// A callback run on every connect and disconnect, after the server was reset, with the server
+/// (whose `backend()` the caller can clear of per-connection state).
+pub type LinkHook<B> = Box<dyn FnMut(LinkEvent, &mut Server<B>) + Send>;
+
 /// Which way a traced L2CAP frame went.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Direction {
@@ -125,6 +138,7 @@ pub struct Peripheral<T: Read + Write, B: Backend> {
     trace: Option<Trace>,
     policy: NotifyPolicy,
     source: Option<Source<B>>,
+    link_hook: Option<LinkHook<B>>,
 }
 
 impl<T: Read + Write, B: Backend> Peripheral<T, B> {
@@ -155,6 +169,7 @@ impl<T: Read + Write, B: Backend> Peripheral<T, B> {
                 trace: None,
                 policy: NotifyPolicy::default(),
                 source: None,
+                link_hook: None,
             },
             Handle { tx },
         )
@@ -203,6 +218,17 @@ impl<T: Read + Write, B: Backend> Peripheral<T, B> {
     /// Run `f` once per loop pass (at least every transport read timeout); see [`Source`].
     pub fn set_source(&mut self, f: Source<B>) {
         self.source = Some(f);
+    }
+
+    /// Run `f` on every connect and disconnect; see [`LinkHook`].
+    pub fn set_link_hook(&mut self, f: LinkHook<B>) {
+        self.link_hook = Some(f);
+    }
+
+    fn link(&mut self, e: LinkEvent) {
+        if let Some(f) = self.link_hook.as_mut() {
+            f(e, &mut self.server);
+        }
     }
 
     /// Choose when notifications are sent; see [`NotifyPolicy`].
@@ -316,6 +342,7 @@ impl<T: Read + Write, B: Backend> Peripheral<T, B> {
             handle,
             reasm: Reassembler::default(),
         });
+        self.link(LinkEvent::Connected);
         Ok(())
     }
 
@@ -324,6 +351,7 @@ impl<T: Read + Write, B: Backend> Peripheral<T, B> {
         self.server.reset();
         self.tx_queue.clear();
         self.in_flight = 0;
+        self.link(LinkEvent::Disconnected);
         self.ctl.start_advertising(&self.ad, &self.params)
     }
 
@@ -432,7 +460,7 @@ mod tests {
     use att_server::{Database, NoBackend, Pdu, Props, Server, Subscription, Uuid, Value};
     use hci_wire::{Packet, PacketBoundary, opcodes};
 
-    use super::{Direction, Handle, NotifyPolicy, Peripheral};
+    use super::{Direction, Handle, LinkEvent, NotifyPolicy, Peripheral};
     use crate::advertising::{AdvParams, Advertisement};
     use crate::controller::{Controller, ControllerInfo};
     use crate::fake::Fake;
@@ -949,5 +977,36 @@ mod tests {
         }));
         let fake = run(&mut p, &h);
         assert_eq!(fake.acl_out().len(), 0);
+    }
+
+    #[test]
+    fn the_link_hook_sees_connect_and_disconnect_in_order() {
+        use std::sync::{Arc, Mutex};
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let (mut p, h, _) = rig(20, |f, _| {
+            f.push_inbound(conn_event(0, H));
+            f.push_inbound(disc_event(H));
+        });
+        let s2 = Arc::clone(&seen);
+        p.set_link_hook(Box::new(move |e, _| s2.lock().unwrap().push(e)));
+        run(&mut p, &h);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [LinkEvent::Connected, LinkEvent::Disconnected]
+        );
+    }
+
+    #[test]
+    fn a_failed_connection_or_a_stranger_does_not_fire_the_hook() {
+        use std::sync::{Arc, Mutex};
+        let seen = Arc::new(Mutex::new(0));
+        let (mut p, h, _) = rig(20, |f, _| {
+            f.push_inbound(conn_event(0x3E, 0));
+            f.push_inbound(disc_event(H));
+        });
+        let s2 = Arc::clone(&seen);
+        p.set_link_hook(Box::new(move |_, _| *s2.lock().unwrap() += 1));
+        run(&mut p, &h);
+        assert_eq!(*seen.lock().unwrap(), 0);
     }
 }
