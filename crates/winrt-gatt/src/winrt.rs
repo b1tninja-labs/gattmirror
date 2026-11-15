@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows::Devices::Bluetooth::Advertisement::{
     BluetoothLEAdvertisementReceivedEventArgs, BluetoothLEAdvertisementWatcher,
@@ -22,9 +22,12 @@ use windows::Devices::Bluetooth::GenericAttributeProfile::{
 use windows::Devices::Bluetooth::{
     BluetoothCacheMode, BluetoothConnectionStatus, BluetoothLEDevice,
 };
-use windows::Foundation::{EventRegistrationToken, TypedEventHandler};
+use windows::Foundation::{
+    AsyncStatus, EventRegistrationToken, IAsyncInfo, IAsyncOperation, TypedEventHandler,
+};
 use windows::Storage::Streams::{DataReader, DataWriter, IBuffer};
 use windows::core::GUID;
+use windows::core::{Interface, RuntimeType};
 
 use crate::chunk::{self, DEFAULT_MTU};
 use crate::error::Error;
@@ -44,6 +47,30 @@ fn status_ok(status: GattCommunicationStatus, what: &str) -> Result<(), Error> {
     } else {
         Err(Error::Status(format!("{what}: {status:?}")))
     }
+}
+
+/// How long any single platform operation may take unless [`ConnectOptions::timeout`] says otherwise.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Wait for an async operation, polling its status, and cancel it if `timeout` passes. `IAsyncOperation::get()`
+/// would block the calling thread for as long as the stack cared to take, which on a peripheral that
+/// has gone away is forever.
+// Takes the operation by value: callers hand it over and never touch it again.
+#[allow(clippy::needless_pass_by_value)]
+fn wait<T: RuntimeType + 'static>(op: IAsyncOperation<T>, timeout: Duration) -> Result<T, Error> {
+    let deadline = Instant::now() + timeout;
+    while op.Status()? == AsyncStatus::Started {
+        if Instant::now() >= deadline {
+            if let Ok(info) = op.cast::<IAsyncInfo>() {
+                let _ = info.Cancel();
+            }
+            return Err(Error::Platform(format!(
+                "operation timed out after {timeout:?}"
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    Ok(op.GetResults()?)
 }
 
 fn buffer_to_vec(buf: &IBuffer) -> Result<Vec<u8>, Error> {
@@ -68,6 +95,8 @@ pub struct Found {
     pub address: u64,
     /// Advertised local name; empty if the matching packet carried none.
     pub name: String,
+    /// Service UUIDs carried in the matching packet (a scan response may carry others).
+    pub services: Vec<Uuid>,
 }
 
 /// Scan until an advertiser matches `filter`, or `timeout` passes.
@@ -93,8 +122,17 @@ pub fn scan(filter: &ScanFilter, timeout: Duration) -> Result<Found, Error> {
                     .map(|h| h.to_string())
                     .unwrap_or_default();
                 if f.matches(&name, address) {
+                    let services = args
+                        .Advertisement()
+                        .and_then(|a| a.ServiceUuids())
+                        .map(|v| v.into_iter().map(to_uuid).collect())
+                        .unwrap_or_default();
                     if let Ok(tx) = tx.lock() {
-                        let _ = tx.send(Found { address, name });
+                        let _ = tx.send(Found {
+                            address,
+                            name,
+                            services,
+                        });
                     }
                 }
             }
@@ -115,6 +153,9 @@ pub struct ConnectOptions {
     /// Called on a platform thread when the link drops. Keep it short and do not block: hand off to a
     /// supervisor (see [`crate::link::retry`]) instead of reconnecting inside it.
     pub on_disconnect: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Bound on each platform operation (device open, each discovery step, read, write, subscribe);
+    /// [`DEFAULT_TIMEOUT`] if `None`.
+    pub timeout: Option<Duration>,
 }
 
 /// A connected peripheral with its discovered table.
@@ -128,6 +169,7 @@ pub struct WinrtClient {
     subs: Mutex<HashMap<u16, EventRegistrationToken>>,
     sender: Arc<Mutex<Sender<ValueChange>>>,
     connected: Arc<AtomicBool>,
+    timeout: Duration,
     status_token: EventRegistrationToken,
     session: Option<GattSession>,
     // Held so the services, and with them the GATT connection, stay open.
@@ -145,7 +187,11 @@ impl WinrtClient {
         address: u64,
         opts: &ConnectOptions,
     ) -> Result<(Self, Receiver<ValueChange>), Error> {
-        let device = BluetoothLEDevice::FromBluetoothAddressAsync(address)?.get()?;
+        let timeout = opts.timeout.unwrap_or(DEFAULT_TIMEOUT);
+        let device = wait(
+            BluetoothLEDevice::FromBluetoothAddressAsync(address)?,
+            timeout,
+        )?;
 
         let connected = Arc::new(AtomicBool::new(
             device.ConnectionStatus()? == BluetoothConnectionStatus::Connected,
@@ -170,15 +216,17 @@ impl WinrtClient {
         let session = device
             .BluetoothDeviceId()
             .and_then(|id| GattSession::FromDeviceIdAsync(&id))
-            .and_then(|op| op.get())
+            .map_err(Error::from)
+            .and_then(|op| wait(op, timeout))
             .ok();
         if let Some(s) = &session {
             let _ = s.SetMaintainConnection(true);
         }
 
-        let services_result = device
-            .GetGattServicesWithCacheModeAsync(BluetoothCacheMode::Uncached)?
-            .get()?;
+        let services_result = wait(
+            device.GetGattServicesWithCacheModeAsync(BluetoothCacheMode::Uncached)?,
+            timeout,
+        )?;
         status_ok(services_result.Status()?, "service discovery")?;
         let service_list = services_result.Services()?;
 
@@ -192,9 +240,10 @@ impl WinrtClient {
                 uuid: to_uuid(service.Uuid()?),
                 characteristics: Vec::new(),
             };
-            let cres = service
-                .GetCharacteristicsWithCacheModeAsync(BluetoothCacheMode::Uncached)?
-                .get()?;
+            let cres = wait(
+                service.GetCharacteristicsWithCacheModeAsync(BluetoothCacheMode::Uncached)?,
+                timeout,
+            )?;
             status_ok(cres.Status()?, "characteristic discovery")?;
             for ch in &cres.Characteristics()? {
                 let mut c = Characteristic {
@@ -206,9 +255,10 @@ impl WinrtClient {
                     ),
                     descriptors: Vec::new(),
                 };
-                let dres = ch
-                    .GetDescriptorsWithCacheModeAsync(BluetoothCacheMode::Uncached)?
-                    .get()?;
+                let dres = wait(
+                    ch.GetDescriptorsWithCacheModeAsync(BluetoothCacheMode::Uncached)?,
+                    timeout,
+                )?;
                 status_ok(dres.Status()?, "descriptor discovery")?;
                 for d in &dres.Descriptors()? {
                     let handle = d.AttributeHandle()?;
@@ -235,6 +285,7 @@ impl WinrtClient {
                 subs: Mutex::new(HashMap::new()),
                 sender: Arc::new(Mutex::new(tx)),
                 connected,
+                timeout,
                 status_token,
                 session,
                 _services: services,
@@ -282,9 +333,10 @@ impl WinrtClient {
     /// Unknown handle, a characteristic that cannot be read, or a platform or status error.
     pub fn read(&self, handle: u16) -> Result<Vec<u8>, Error> {
         let ch = self.characteristic(handle)?;
-        let r = ch
-            .ReadValueWithCacheModeAsync(BluetoothCacheMode::Uncached)?
-            .get()?;
+        let r = wait(
+            ch.ReadValueWithCacheModeAsync(BluetoothCacheMode::Uncached)?,
+            self.timeout,
+        )?;
         status_ok(r.Status()?, "read")?;
         buffer_to_vec(&r.Value()?)
     }
@@ -298,9 +350,10 @@ impl WinrtClient {
             .descs
             .get(&handle)
             .ok_or(Error::UnknownHandle(handle))?;
-        let r = d
-            .ReadValueWithCacheModeAsync(BluetoothCacheMode::Uncached)?
-            .get()?;
+        let r = wait(
+            d.ReadValueWithCacheModeAsync(BluetoothCacheMode::Uncached)?,
+            self.timeout,
+        )?;
         status_ok(r.Status()?, "descriptor read")?;
         buffer_to_vec(&r.Value()?)
     }
@@ -329,9 +382,10 @@ impl WinrtClient {
                 "characteristic does not declare this write mode",
             ));
         }
-        let status = ch
-            .WriteValueWithOptionAsync(&vec_to_buffer(data)?, option)?
-            .get()?;
+        let status = wait(
+            ch.WriteValueWithOptionAsync(&vec_to_buffer(data)?, option)?,
+            self.timeout,
+        )?;
         status_ok(status, "write")
     }
 
@@ -387,9 +441,10 @@ impl WinrtClient {
                 Ok(())
             });
         let token = ch.ValueChanged(&handler)?;
-        let status = ch
-            .WriteClientCharacteristicConfigurationDescriptorAsync(cccd)?
-            .get()?;
+        let status = wait(
+            ch.WriteClientCharacteristicConfigurationDescriptorAsync(cccd)?,
+            self.timeout,
+        )?;
         if let Err(e) = status_ok(status, "enable notifications") {
             let _ = ch.RemoveValueChanged(token);
             return Err(e);
@@ -411,11 +466,12 @@ impl WinrtClient {
             .remove(&handle);
         if let Some(token) = token {
             let _ = ch.RemoveValueChanged(token);
-            let status = ch
-                .WriteClientCharacteristicConfigurationDescriptorAsync(
+            let status = wait(
+                ch.WriteClientCharacteristicConfigurationDescriptorAsync(
                     GattClientCharacteristicConfigurationDescriptorValue::None,
-                )?
-                .get()?;
+                )?,
+                self.timeout,
+            )?;
             status_ok(status, "disable notifications")?;
         }
         Ok(())

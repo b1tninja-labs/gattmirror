@@ -15,6 +15,7 @@ pub mod error;
 pub mod filter;
 pub mod link;
 pub mod properties;
+pub mod snapshot;
 pub mod table;
 pub mod uuid;
 
@@ -22,7 +23,7 @@ pub mod uuid;
 mod winrt;
 
 #[cfg(windows)]
-pub use winrt::{ConnectOptions, Found, WinrtClient, scan};
+pub use winrt::{ConnectOptions, DEFAULT_TIMEOUT, Found, WinrtClient, scan};
 
 pub use error::Error;
 pub use filter::ScanFilter;
