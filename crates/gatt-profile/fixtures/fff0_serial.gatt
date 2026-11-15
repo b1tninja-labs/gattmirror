@@ -1,0 +1,13 @@
+# A serial adapter exposing the common FFF0 profile: FFF1 notifies (adapter to host),
+# FFF2 is written (host to adapter). Shape as in obd-bridge docs/ble-re.md; no address.
+device-name Example Serial Adapter
+adv-name Example Serial Adapter
+adv-service fff0
+
+service 1800 primary
+  characteristic 2a00 read value=4578616d706c652053657269616c2041646170746572
+
+service fff0 primary
+  characteristic fff1 notify
+    descriptor 2902 value=0000
+  characteristic fff2 write,write-no-response

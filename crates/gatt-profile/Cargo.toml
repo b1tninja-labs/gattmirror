@@ -1,0 +1,11 @@
+[package]
+name = "gatt-profile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "A no-I/O model and plain-text format for a snapshot of a BLE peripheral's GATT table"
+publish = false
+
+[lints]
+workspace = true
