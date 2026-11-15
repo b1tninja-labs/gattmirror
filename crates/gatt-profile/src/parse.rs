@@ -30,7 +30,21 @@ pub enum ParseErrorKind {
     Duplicate(&'static str),
     /// A directive that takes text was given none.
     EmptyText(&'static str),
+    /// The `gatt-profile` header's version is not a positive integer.
+    BadVersion(String),
+    /// The file declares a format version newer than [`FORMAT_VERSION`].
+    UnsupportedVersion(u32),
+    /// The `gatt-profile` header is not the first directive.
+    HeaderNotFirst,
 }
+
+/// The text-format version this crate reads and writes.
+///
+/// Compatibility rules: a file may start with `gatt-profile N`; without it the file is version 1. A
+/// reader refuses a version above its own. Within a version, a directive whose name starts with `x-`
+/// and an option whose name starts with `x-` are ignored, so a writer can add private annotations
+/// without a version bump; anything else new bumps the version.
+pub const FORMAT_VERSION: u32 = 1;
 
 /// A parse failure at a 1-based line.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,6 +73,14 @@ impl fmt::Display for ParseError {
             ParseErrorKind::NoCharacteristic => f.write_str("descriptor before any characteristic"),
             ParseErrorKind::Duplicate(d) => write!(f, "`{d}` given twice"),
             ParseErrorKind::EmptyText(d) => write!(f, "`{d}` needs a name"),
+            ParseErrorKind::BadVersion(v) => write!(f, "`{v}` is not a format version number"),
+            ParseErrorKind::UnsupportedVersion(v) => write!(
+                f,
+                "format version {v} is newer than the supported version {FORMAT_VERSION}"
+            ),
+            ParseErrorKind::HeaderNotFirst => {
+                f.write_str("`gatt-profile` must be the first directive")
+            }
         }
     }
 }
@@ -107,6 +129,9 @@ fn parse_value<'a>(
 ) -> Result<Option<Vec<u8>>, ParseErrorKind> {
     let mut value = None;
     for w in words {
+        if w.starts_with("x-") {
+            continue;
+        }
         match w.strip_prefix("value=") {
             Some(h) if value.is_none() => value = Some(parse_hex(h)?),
             _ => return Err(ParseErrorKind::BadOption(w.to_owned())),
@@ -197,14 +222,32 @@ fn line(profile: &mut Profile, raw: &str) -> Result<(), ParseErrorKind> {
                 .descriptors
                 .push(Descriptor { uuid, value });
         }
+        ext if ext.starts_with("x-") => {}
         other => return Err(ParseErrorKind::UnknownDirective(other.to_owned())),
+    }
+    Ok(())
+}
+
+fn header(t: &str) -> Result<(), ParseErrorKind> {
+    let mut words = t.split_whitespace().skip(1);
+    let v = words
+        .next()
+        .ok_or(ParseErrorKind::MissingArgument("version"))?;
+    no_more(words)?;
+    let n: u32 = v
+        .parse()
+        .ok()
+        .filter(|n| *n > 0)
+        .ok_or_else(|| ParseErrorKind::BadVersion(v.to_owned()))?;
+    if n > FORMAT_VERSION {
+        return Err(ParseErrorKind::UnsupportedVersion(n));
     }
     Ok(())
 }
 
 /// Parse the text format.
 ///
-/// One directive per line; blank lines and lines starting with `#` are ignored; indentation is
+/// An optional `gatt-profile N` header may come first (see [`FORMAT_VERSION`]). One directive per line; blank lines and lines starting with `#` are ignored; indentation is
 /// free. Directives: `device-name TEXT`, `adv-name TEXT`, `adv-service UUID`,
 /// `service UUID [primary|secondary]`, `characteristic UUID PROPS [value=HEX]` and
 /// `descriptor UUID [value=HEX]`. `PROPS` is `none`, `0xNN`, or a comma list of
@@ -215,12 +258,23 @@ fn line(profile: &mut Profile, raw: &str) -> Result<(), ParseErrorKind> {
 /// The first malformed line, with its 1-based number.
 pub fn parse(input: &str) -> Result<Profile, ParseError> {
     let mut profile = Profile::default();
+    let mut first = true;
     for (i, raw) in input.lines().enumerate() {
         let t = raw.trim();
         if t.is_empty() || t.starts_with('#') {
             continue;
         }
-        line(&mut profile, raw).map_err(|kind| ParseError { line: i + 1, kind })?;
+        let at = |kind| ParseError { line: i + 1, kind };
+        if t.split_whitespace().next() == Some("gatt-profile") {
+            if !first {
+                return Err(at(ParseErrorKind::HeaderNotFirst));
+            }
+            first = false;
+            header(t).map_err(at)?;
+            continue;
+        }
+        first = false;
+        line(&mut profile, raw).map_err(at)?;
     }
     Ok(profile)
 }

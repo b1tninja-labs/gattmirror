@@ -1,0 +1,13 @@
+gatt-profile 1
+# The baseline every peripheral carries: GAP with device name and appearance, GATT with Service
+# Changed. Names are from the SIG Assigned Numbers listing (see src/assigned.rs); the property
+# bits are the usual ones and are not read from the specification.
+device-name Example Baseline
+
+service 1800 primary
+  characteristic 2a00 read value=4578616d706c6520426173656c696e65
+  characteristic 2a01 read value=0000
+
+service 1801 primary
+  characteristic 2a05 indicate
+    descriptor 2902 value=0000

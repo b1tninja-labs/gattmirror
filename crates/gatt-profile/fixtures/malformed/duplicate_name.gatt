@@ -1,0 +1,3 @@
+# expect: 3 Duplicate
+device-name a
+device-name b

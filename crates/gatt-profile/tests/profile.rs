@@ -175,5 +175,9 @@ fn raw_property_bytes_and_none_parse() {
 #[test]
 fn empty_input_is_an_empty_profile() {
     assert_eq!(parse("").unwrap(), Profile::default());
-    assert_eq!(write(&Profile::default()), "");
+    assert_eq!(
+        write(&Profile::default()),
+        "gatt-profile 1
+"
+    );
 }
