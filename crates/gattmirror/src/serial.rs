@@ -192,6 +192,10 @@ impl<S: ByteStream> Backend for SerialBackend<S> {
         }
     }
 
+    fn reset_connection(&mut self) {
+        self.pending.clear();
+    }
+
     fn notifications(&mut self) -> Option<Receiver<Notification>> {
         self.rx.take()
     }

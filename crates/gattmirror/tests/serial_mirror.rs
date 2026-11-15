@@ -195,3 +195,39 @@ fn a_tcp_served_stream_backs_the_mirror() {
 fn stream_error_is_a_plain_value() {
     assert_eq!(StreamError::Closed, StreamError::Closed);
 }
+
+#[test]
+fn a_new_connection_does_not_inherit_a_partial_command() {
+    let (m, wh, nh) = guest_for(FFF0, WriteBuffering::UntilByte(b'\r'));
+    let (mut server, mut pump) = m.into_parts();
+    server.handle(&Pdu::WriteReq {
+        handle: nh + 1,
+        value: vec![1, 0],
+    });
+    server.handle(&Pdu::WriteReq {
+        handle: wh,
+        value: b"AT".to_vec(),
+    });
+    // What a host loop's link hook does after `Server::reset`.
+    server.reset();
+    server.backend().reset_connection();
+    server.handle(&Pdu::WriteReq {
+        handle: nh + 1,
+        value: vec![1, 0],
+    });
+    server.handle(&Pdu::WriteReq {
+        handle: wh,
+        value: b"ATI\r".to_vec(),
+    });
+    let mut got = Vec::new();
+    let end = Instant::now() + Duration::from_secs(5);
+    while !got.ends_with(b">") && Instant::now() < end {
+        for p in pump.drain(&mut server) {
+            if let Pdu::Notification { value, .. } = p {
+                got.extend(value);
+            }
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(got, b"ATI\r\nOK\r\n>");
+}

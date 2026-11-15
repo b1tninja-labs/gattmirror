@@ -26,6 +26,15 @@ impl<B> Relay<B> {
     pub fn backend(&mut self) -> &mut B {
         &mut self.backend
     }
+
+    /// Tell the adapter the guest connection changed; call it from a host loop's link hook,
+    /// after `Server::reset`.
+    pub fn reset_connection(&mut self)
+    where
+        B: Backend,
+    {
+        self.backend.reset_connection();
+    }
 }
 
 fn read_error(e: BackendError) -> ErrorCode {
@@ -240,6 +249,7 @@ impl<B: Backend> Mirror<B> {
     /// Forget the guest: MTU, subscriptions and queued updates.
     pub fn reset(&mut self) {
         self.server.reset();
+        self.server.backend().reset_connection();
     }
 
     /// Move every notification the adapter has sent onto the server's queue; see [`Pump::pump`].
