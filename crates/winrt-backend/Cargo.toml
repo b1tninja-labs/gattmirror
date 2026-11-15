@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 gatt-profile = { path = "../gatt-profile" }
 gattmirror = { path = "../gattmirror" }
+serial-stream = { path = "../serial-stream" }
 winrt-gatt = { path = "../winrt-gatt" }
 
 [lints]

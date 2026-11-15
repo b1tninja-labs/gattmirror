@@ -49,6 +49,11 @@ pub trait Transport {
     fn unsubscribe(&mut self, handle: u16) -> Result<(), Error>;
     /// Whether the link is up.
     fn is_connected(&self) -> bool;
+    /// The largest value one [`write`](Self::write) may carry at the current MTU. The adapter splits
+    /// longer values; the default is the 20 bytes of the unnegotiated 23-byte MTU.
+    fn max_payload(&self) -> usize {
+        crate::chunk::max_payload(crate::chunk::DEFAULT_MTU)
+    }
 }
 
 /// Opens connections. Called again after every drop.
@@ -191,7 +196,7 @@ impl<C: Connector> Adapter<C> {
         self.run(|t| t.read(handle))
     }
 
-    /// Write a characteristic by index.
+    /// Write a characteristic by index, split into pieces that fit the MTU.
     ///
     /// # Errors
     /// As [`read`](Self::read), for a write mode the characteristic does not declare.
@@ -206,7 +211,18 @@ impl<C: Connector> Adapter<C> {
                 "characteristic does not declare this write mode",
             ));
         }
-        self.run(|t| t.write(handle, data, mode))
+        if data.is_empty() {
+            return self.run(|t| t.write(handle, data, mode));
+        }
+        // The payload limit is read per piece: a reconnect can renegotiate the MTU.
+        let mut rest = data;
+        while !rest.is_empty() {
+            let take = self.transport.max_payload().max(1).min(rest.len());
+            let (piece, tail) = rest.split_at(take);
+            self.run(|t| t.write(handle, piece, mode))?;
+            rest = tail;
+        }
+        Ok(())
     }
 
     /// Turn notifications for a characteristic on or off, and remember the choice so a reconnect
@@ -493,6 +509,20 @@ mod tests {
         let log = w.borrow().log.clone();
         // subscribed once, then again after the reconnect and before the retried write
         assert_eq!(log, ["sub 3", "sub 3", "write 6 [7] WithResponse"]);
+    }
+
+    #[test]
+    fn long_writes_are_split_at_the_transport_payload_in_order() {
+        let w = Shared::default();
+        let mut a = open(&w, quick(None)).unwrap();
+        let data: Vec<u8> = (0..45).collect();
+        a.write(1, &data, WriteMode::WithResponse).unwrap();
+        let log = w.borrow().log.clone();
+        assert_eq!(log.len(), 3);
+        assert!(log[0].starts_with("write 6 [0, 1, 2"));
+        assert!(log[2].ends_with("44] WithResponse"));
+        let total: usize = log.iter().map(|l| l.matches(',').count() + 1).sum();
+        assert_eq!(total, 45);
     }
 
     #[test]
