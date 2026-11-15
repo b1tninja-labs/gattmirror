@@ -38,10 +38,12 @@ Status:
 |---|---|---|
 | `hci-wire` | H4 framing, HCI packets, typed events | [crates/hci-wire/ROADMAP.md](crates/hci-wire/ROADMAP.md) |
 | `att-server` | ATT PDUs and the GATT attribute database | [crates/att-server/ROADMAP.md](crates/att-server/ROADMAP.md) |
-| `le-host` | LE peripheral host over HCI: advertise, connect, L2CAP | [crates/le-host/ROADMAP.md](crates/le-host/ROADMAP.md) (advertising slice) |
+| `le-host` | LE peripheral host over HCI: advertise, connect, L2CAP | [crates/le-host/ROADMAP.md](crates/le-host/ROADMAP.md) (advertising, connections, ATT channel) |
 | `gatt-profile` | text snapshot of a GATT table | [crates/gatt-profile/ROADMAP.md](crates/gatt-profile/ROADMAP.md) |
 | `winrt-gatt` | Windows GATT client toward the real adapter | [crates/winrt-gatt/ROADMAP.md](crates/winrt-gatt/ROADMAP.md) |
-| `gattmirror` | the relay binary | not started |
+| `serial-stream` | the `ByteStream` contract (ELM327 byte stream), in-memory and TCP implementations | [crates/serial-stream/ROADMAP.md](crates/serial-stream/ROADMAP.md) |
+| `winrt-backend` | the real-adapter `Backend` over `winrt-gatt` (compile-checked only) | [crates/winrt-backend/ROADMAP.md](crates/winrt-backend/ROADMAP.md) |
+| `gattmirror` | the relay: `Backend` trait, serial shim, simulated adapter, CLI skeleton | [crates/gattmirror/ROADMAP.md](crates/gattmirror/ROADMAP.md) |
 
 A crate gets a ROADMAP file when work on it starts, not before: an empty table is a promise nobody keeps.
 
