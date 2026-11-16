@@ -1,6 +1,6 @@
 use crate::uuid::Uuid;
 
-/// ATT opcodes. Values are from memory of the protocol and are `[unread]`; see `ROADMAP.md`.
+/// ATT opcodes (Bluetooth Core Specification 6.3 Vol 3 Part F §3.4.8, Table 3.42).
 pub mod opcode {
     /// Error Response.
     pub const ERROR_RSP: u8 = 0x01;

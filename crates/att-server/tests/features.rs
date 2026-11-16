@@ -293,3 +293,213 @@ fn per_connection_state_is_not_shared_between_servers() {
         err(0x0A, h.signed, ErrorCode::InsufficientAuthentication)
     );
 }
+
+fn one_char_server(props: Props, value: Value, level: Level) -> (Server<Rec>, u16) {
+    let mut b = Database::builder();
+    b.service(Uuid::from_u16(0xFFE0)).unwrap();
+    let h = b
+        .characteristic(Uuid::from_u16(0xFFE1), props, value)
+        .unwrap();
+    b.require(h, level, level).unwrap();
+    (Server::new(b.build(), Rec::default(), 247), h)
+}
+
+/// Core 6.3 Vol 3 Part F 4: authentication and authorization are checked before any other check,
+/// so a protected attribute that is also not readable or not writable reports the security error.
+#[test]
+fn security_is_checked_before_access_permission() {
+    let (mut s, h) = one_char_server(Props::WRITE, Value::Dynamic, Level::Authenticated);
+    assert_eq!(
+        s.handle(&Pdu::ReadReq { handle: h }),
+        err(0x0A, h, ErrorCode::InsufficientAuthentication)
+    );
+    let (mut s, h) = one_char_server(Props::READ, Value::Dynamic, Level::Encrypted);
+    assert_eq!(
+        s.handle(&Pdu::WriteReq {
+            handle: h,
+            value: vec![1]
+        }),
+        err(0x12, h, ErrorCode::InsufficientEncryption)
+    );
+    // With the link raised the plain permission error is reported.
+    s.set_link_level(Level::Encrypted);
+    assert_eq!(
+        s.handle(&Pdu::WriteReq {
+            handle: h,
+            value: vec![1]
+        }),
+        err(0x12, h, ErrorCode::WriteNotPermitted)
+    );
+}
+
+/// Core 6.3 Vol 3 Part F 3.4.3.3: only attributes the client may read are matched, and the request
+/// never answers with a security error.
+#[test]
+fn find_by_type_value_matches_only_readable_attributes() {
+    let (mut s, _h) = one_char_server(Props::READ, Value::Static(vec![9]), Level::Encrypted);
+    let find = |s: &mut Server<Rec>| {
+        s.handle(&Pdu::FindByTypeValueReq {
+            start: 1,
+            end: 0xFFFF,
+            attr_type: 0xFFE1,
+            value: vec![9],
+        })
+    };
+    assert_eq!(find(&mut s), err(0x06, 1, ErrorCode::AttributeNotFound));
+    s.set_link_level(Level::Encrypted);
+    assert!(matches!(
+        find(&mut s),
+        Some(Pdu::FindByTypeValueRsp { ranges }) if ranges.len() == 1
+    ));
+    // A dynamic value is compared too.
+    let (mut s, _h) = one_char_server(Props::READ, Value::Dynamic, Level::Open);
+    assert!(matches!(
+        s.handle(&Pdu::FindByTypeValueReq {
+            start: 1,
+            end: 0xFFFF,
+            attr_type: 0xFFE1,
+            value: vec![0xEE; 3],
+        }),
+        Some(Pdu::FindByTypeValueRsp { .. })
+    ));
+}
+
+/// Core 6.3 Vol 3 Part F 3.4.4.7: the response needs every handle valid and readable, even those
+/// whose values would be cut off by the MTU.
+#[test]
+fn read_multiple_checks_handles_past_the_mtu_cut() {
+    let (mut s, h) = one_char_server(Props::READ, Value::Static(vec![5; 40]), Level::Open);
+    assert_eq!(
+        s.handle(&Pdu::ReadMultipleReq {
+            handles: vec![h, 0x0F00]
+        }),
+        err(0x0E, 0x0F00, ErrorCode::InvalidHandle)
+    );
+    // Both valid: the concatenation is cut to MTU - 1 (22 at the default MTU).
+    let Some(Pdu::ReadMultipleRsp { values }) = s.handle(&Pdu::ReadMultipleReq {
+        handles: vec![h, h],
+    }) else {
+        panic!("expected a Read Multiple Response");
+    };
+    assert_eq!(values.len(), 22);
+}
+
+/// Core 6.3 Vol 3 Part G 2.5.3: Primary and Secondary Service are both grouping types for Read By
+/// Group Type; Characteristic is not.
+#[test]
+fn group_type_secondary_service_is_supported_characteristic_is_not() {
+    let (mut s, _h) = one_char_server(Props::READ, Value::Static(vec![1]), Level::Open);
+    let group = |s: &mut Server<Rec>, t: u16| {
+        s.handle(&Pdu::ReadByGroupTypeReq {
+            start: 1,
+            end: 0xFFFF,
+            group_type: Uuid::from_u16(t),
+        })
+    };
+    assert_eq!(
+        group(&mut s, 0x2801),
+        err(0x10, 1, ErrorCode::AttributeNotFound)
+    );
+    assert_eq!(
+        group(&mut s, 0x2803),
+        err(0x10, 1, ErrorCode::UnsupportedGroupType)
+    );
+}
+
+/// Core 6.3 Vol 3 Part F 3.4.4.1: an attribute that would cause an error ends the list, and only
+/// the attributes before it are returned; when the first one fails its error is the response.
+#[test]
+fn read_by_type_stops_at_the_first_unreadable_match() {
+    let mut b = Database::builder();
+    b.service(Uuid::from_u16(0xFFE0)).unwrap();
+    let a = b
+        .characteristic(
+            Uuid::from_u16(0xFFE1),
+            Props::READ,
+            Value::Static(vec![1, 1]),
+        )
+        .unwrap();
+    let hidden = b
+        .characteristic(
+            Uuid::from_u16(0xFFE1),
+            Props::READ,
+            Value::Static(vec![2, 2]),
+        )
+        .unwrap();
+    let c = b
+        .characteristic(
+            Uuid::from_u16(0xFFE1),
+            Props::READ,
+            Value::Static(vec![3, 3]),
+        )
+        .unwrap();
+    b.require(hidden, Level::Encrypted, Level::Open).unwrap();
+    let mut s = Server::new(b.build(), Rec::default(), 247);
+    let req = |s: &mut Server<Rec>, start: u16| {
+        s.handle(&Pdu::ReadByTypeReq {
+            start,
+            end: 0xFFFF,
+            attr_type: Uuid::from_u16(0xFFE1),
+        })
+    };
+    // The first match is returned; the unreadable second ends the list before the third.
+    assert_eq!(
+        req(&mut s, 1),
+        Some(Pdu::ReadByTypeRsp {
+            entries: vec![(a, vec![1, 1])]
+        })
+    );
+    // Starting at the unreadable one, its error is the response, with its handle.
+    assert_eq!(
+        req(&mut s, hidden),
+        err(0x08, hidden, ErrorCode::InsufficientEncryption)
+    );
+    s.set_link_level(Level::Encrypted);
+    let Some(Pdu::ReadByTypeRsp { entries }) = req(&mut s, 1) else {
+        panic!("expected a response");
+    };
+    assert_eq!(entries.len(), 3);
+    assert_eq!(entries[2].0, c);
+}
+
+/// Core 6.3 Vol 3 Part F 3.4.4.10: every Attribute Data in one response has the length the Length
+/// field gives, so a 16-bit service and a 128-bit service never share a response.
+#[test]
+fn read_by_group_type_does_not_mix_16_and_128_bit_services() {
+    let mut b = Database::builder();
+    let first = b.service(Uuid::from_u16(0xFFE0)).unwrap();
+    let second = b
+        .service(Uuid::from_u128(0x1234_5678_9ABC_DEF0_1122_3344_5566_7788))
+        .unwrap();
+    let mut s = Server::new(b.build(), Rec::default(), 247);
+    s.handle(&Pdu::MtuReq { mtu: 247 });
+    let group = |s: &mut Server<Rec>, start: u16| {
+        let Some(Pdu::ReadByGroupTypeRsp { entries }) = s.handle(&Pdu::ReadByGroupTypeReq {
+            start,
+            end: 0xFFFF,
+            group_type: Uuid::from_u16(0x2800),
+        }) else {
+            panic!("expected a response");
+        };
+        entries.iter().map(|e| e.start).collect::<Vec<_>>()
+    };
+    assert_eq!(group(&mut s, 1), vec![first]);
+    assert_eq!(group(&mut s, first + 1), vec![second]);
+}
+
+/// Bookkeeping of this crate (the specification is silent): turning indications off drops the
+/// indications still queued.
+#[test]
+fn disabling_indications_drops_queued_indications() {
+    let (mut s, h) = server();
+    let write = |s: &mut Server<Rec>, bits: u8| {
+        s.handle(&Pdu::WriteReq {
+            handle: h.ind_cccd,
+            value: vec![bits, 0],
+        })
+    };
+    assert_eq!(write(&mut s, 2), Some(Pdu::WriteRsp));
+    s.indicate(h.ind, &[1]).unwrap();
+    assert_eq!(write(&mut s, 0), Some(Pdu::WriteRsp));
+    assert_eq!(s.poll_outgoing(), None);
+}
