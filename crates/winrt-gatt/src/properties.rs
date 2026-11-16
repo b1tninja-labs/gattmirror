@@ -1,7 +1,8 @@
 //! Characteristic properties as the bit set a peripheral declares.
 //!
-//! Bit positions are those of the Windows `GattCharacteristicProperties` flags, which mirror the
-//! declaration byte on the wire (observed, `[unread]`).
+//! Bit positions for the low byte are those of the characteristic declaration (Core Specification 7.0,
+//! Vol 3 Part G, Table 3.5), which the Windows `GattCharacteristicProperties` flags mirror (observed).
+//! In 7.0 bit `0x40` is "previously used".
 
 use std::fmt;
 
@@ -91,6 +92,19 @@ mod tests {
         let p = Properties(Properties::NOTIFY | Properties::READ | Properties::WRITE);
         assert_eq!(p.names(), ["read", "write", "notify"]);
         assert_eq!(Properties::default().names().len(), 0);
+    }
+
+    #[test]
+    fn declaration_bits_follow_core_table_3_5() {
+        // Core Specification 7.0, Vol 3 Part G, Table 3.5.
+        assert_eq!(Properties::BROADCAST, 0x01);
+        assert_eq!(Properties::READ, 0x02);
+        assert_eq!(Properties::WRITE_WITHOUT_RESPONSE, 0x04);
+        assert_eq!(Properties::WRITE, 0x08);
+        assert_eq!(Properties::NOTIFY, 0x10);
+        assert_eq!(Properties::INDICATE, 0x20);
+        assert_eq!(Properties::SIGNED_WRITE, 0x40);
+        assert_eq!(Properties::EXTENDED, 0x80);
     }
 
     #[test]

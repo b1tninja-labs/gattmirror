@@ -1,8 +1,8 @@
 //! MTU arithmetic and write chunking.
 //!
-//! An ATT value carried in a single PDU is at most `MTU - 3` bytes (one opcode byte plus a two-byte
-//! handle), and the default MTU is 23. Both are what the working precedent (`obd-bridge`) assumes and
-//! are `[unread]`.
+//! An ATT value carried in a write command or a notification is at most `MTU - 3` bytes (one opcode
+//! byte plus a two-byte handle): Core Specification 7.0, Vol 3 Part F, 3.2.9 and 3.4.7.1. The default
+//! MTU of 23 is what the working precedent (`obd-bridge`) assumes and is `[unread]`.
 
 /// The default ATT MTU before any exchange.
 pub const DEFAULT_MTU: u16 = 23;

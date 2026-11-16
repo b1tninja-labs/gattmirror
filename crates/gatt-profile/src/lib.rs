@@ -15,7 +15,7 @@ mod serial;
 mod uuid;
 mod write;
 
-pub use attribute::{Attribute, AttributeError, AttributeRole, type_uuids};
+pub use attribute::{Attribute, AttributeError, AttributeRole, cccd, type_uuids};
 pub use diff::{Difference, Side};
 pub use lint::{Issue, IssueKind, Severity};
 pub use model::{Characteristic, Descriptor, Profile, Properties, Service, ServiceKind};
