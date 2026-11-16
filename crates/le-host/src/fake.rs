@@ -22,6 +22,7 @@ pub struct Fake {
     block_when_idle: bool,
     auto_complete: bool,
     acl_out: Vec<Packet>,
+    no_le_buffer: bool,
 }
 
 fn complete(num: u8, op: Opcode, ret: &[u8]) -> Vec<u8> {
@@ -34,6 +35,11 @@ fn complete(num: u8, op: Opcode, ret: &[u8]) -> Vec<u8> {
 impl Fake {
     pub fn commands(&self) -> Vec<(Opcode, Vec<u8>)> {
         self.log.clone()
+    }
+    /// Answer LE Read Buffer Size with a zero length and count, as a controller with no
+    /// dedicated LE buffer does.
+    pub fn no_le_buffer(&mut self) {
+        self.no_le_buffer = true;
     }
     pub fn refuse(&mut self, op: Opcode, status: u8) {
         self.refuse.push((op, status));
@@ -107,7 +113,11 @@ impl Fake {
         } else if op == opcodes::READ_BD_ADDR {
             vec![0, 1, 2, 3, 4, 5, 6]
         } else if op == opcodes::LE_READ_BUFFER_SIZE {
-            vec![0, 27, 0, 20]
+            if self.no_le_buffer {
+                vec![0, 0, 0, 0]
+            } else {
+                vec![0, 27, 0, 20]
+            }
         } else {
             vec![0]
         };

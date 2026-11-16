@@ -1,4 +1,8 @@
 //! HCI command opcodes: a 6-bit opcode group field (OGF) over a 10-bit command field (OCF).
+//!
+//! Anchors are Bluetooth Core Specification 6.3 (final, 2026-03), Vol 4 Part E: §5.4.1 (the opcode
+//! is the OGF in the upper 6 bits and the OCF in the lower 10), §7.1.6, §7.3.1, §7.3.2, §7.4 and
+//! §7.8. Each constant names the section its OCF was read from.
 
 use core::fmt;
 
@@ -43,27 +47,29 @@ impl fmt::Debug for Opcode {
 pub mod opcodes {
     use super::Opcode;
 
-    /// Reset (controller and baseband group `0x03`, command `0x003`).
+    /// Reset (controller and baseband group `0x03`, command `0x003`). Core 6.3 §7.3.2; OGF `0x03` is
+    /// stated at §7.3.
     pub const RESET: Opcode = Opcode::new(0x03, 0x003);
-    /// Read Local Version Information (informational group `0x04`, command `0x001`).
+    /// Read Local Version Information (informational group `0x04`, command `0x001`). Core 6.3 §7.4.
     pub const READ_LOCAL_VERSION: Opcode = Opcode::new(0x04, 0x001);
-    /// Read `BD_ADDR` (informational group `0x04`, command `0x009`).
+    /// Read `BD_ADDR` (informational group `0x04`, command `0x009`). Core 6.3 §7.4.
     pub const READ_BD_ADDR: Opcode = Opcode::new(0x04, 0x009);
-    /// LE Read Buffer Size (LE group `0x08`, command `0x002`).
+    /// LE Read Buffer Size, version 1 (LE group `0x08`, command `0x002`). Core 6.3 §7.8.2. Version 2 of
+    /// the command is `0x0060` and adds the ISO buffer fields; this project uses v1.
     pub const LE_READ_BUFFER_SIZE: Opcode = Opcode::new(0x08, 0x002);
-    /// LE Set Advertising Enable (LE group `0x08`, command `0x00A`).
+    /// LE Set Advertising Enable (LE group `0x08`, command `0x00A`). Core 6.3 §7.8.9.
     pub const LE_SET_ADVERTISING_ENABLE: Opcode = Opcode::new(0x08, 0x00A);
-    /// Set Event Mask (controller and baseband group `0x03`, command `0x001`). `[unread]`
+    /// Set Event Mask (controller and baseband group `0x03`, command `0x001`). Core 6.3 §7.3.1.
     pub const SET_EVENT_MASK: Opcode = Opcode::new(0x03, 0x001);
-    /// LE Set Event Mask (LE group `0x08`, command `0x001`). `[unread]`
+    /// LE Set Event Mask, version 1 (LE group `0x08`, command `0x001`). Core 6.3 §7.8.1 (v2 is `0x00A4`).
     pub const LE_SET_EVENT_MASK: Opcode = Opcode::new(0x08, 0x001);
-    /// LE Set Advertising Parameters (LE group `0x08`, command `0x006`). `[unread]`
+    /// LE Set Advertising Parameters (LE group `0x08`, command `0x006`). Core 6.3 §7.8.5.
     pub const LE_SET_ADVERTISING_PARAMETERS: Opcode = Opcode::new(0x08, 0x006);
-    /// LE Set Advertising Data (LE group `0x08`, command `0x008`). `[unread]`
+    /// LE Set Advertising Data (LE group `0x08`, command `0x008`). Core 6.3 §7.8.7.
     pub const LE_SET_ADVERTISING_DATA: Opcode = Opcode::new(0x08, 0x008);
-    /// LE Set Scan Response Data (LE group `0x08`, command `0x009`). `[unread]`
+    /// LE Set Scan Response Data (LE group `0x08`, command `0x009`). Core 6.3 §7.8.8.
     pub const LE_SET_SCAN_RESPONSE_DATA: Opcode = Opcode::new(0x08, 0x009);
-    /// Disconnect (link control group `0x01`, command `0x006`). `[unread]`
+    /// Disconnect (link control group `0x01`, command `0x006`). Core 6.3 §7.1.6.
     pub const DISCONNECT: Opcode = Opcode::new(0x01, 0x006);
 }
 
@@ -78,8 +84,9 @@ mod tests {
     }
 
     #[test]
-    fn opcodes_have_the_values_a_controller_accepted() {
-        // Sent to a live controller as little-endian bytes 03 0c, 01 10, 09 10, 02 20 and 0a 20.
+    fn opcodes_have_the_values_in_the_specification() {
+        // OCFs from Core 6.3 §7.3.2, §7.4, §7.4, §7.8.2 and §7.8.9; also sent live as 03 0c, 01 10,
+        // 09 10, 02 20 and 0a 20.
         assert_eq!(opcodes::RESET.0, 0x0C03);
         assert_eq!(opcodes::READ_LOCAL_VERSION.0, 0x1001);
         assert_eq!(opcodes::READ_BD_ADDR.0, 0x1009);
@@ -87,10 +94,10 @@ mod tests {
         assert_eq!(opcodes::LE_SET_ADVERTISING_ENABLE.0, 0x200A);
     }
 
-    /// Accepted by a live controller (Command Complete status 0) in `le-host`'s live test; the
-    /// numbers themselves are not read from the specification.
+    /// OCFs from Core 6.3 §7.3.1 (`0x0001`), §7.8.1 (`0x0001`), §7.8.5 (`0x0006`), §7.8.7
+    /// (`0x0008`) and §7.8.8 (`0x0009`); OGFs `0x03` (§7.3) and `0x08` (§7.8).
     #[test]
-    fn advertising_opcodes_have_the_values_a_controller_accepted() {
+    fn advertising_opcodes_have_the_values_in_the_specification() {
         assert_eq!(opcodes::SET_EVENT_MASK.0, 0x0C01);
         assert_eq!(opcodes::LE_SET_EVENT_MASK.0, 0x2001);
         assert_eq!(opcodes::LE_SET_ADVERTISING_PARAMETERS.0, 0x2006);
@@ -98,8 +105,9 @@ mod tests {
         assert_eq!(opcodes::LE_SET_SCAN_RESPONSE_DATA.0, 0x2009);
     }
 
+    /// OCF `0x0006` in §7.1.6; OGF `0x01` is the Link Control group (§7.1).
     #[test]
-    fn disconnect_has_the_value_a_controller_accepted() {
+    fn disconnect_has_the_value_in_the_specification() {
         assert_eq!(opcodes::DISCONNECT.0, 0x0406);
     }
 

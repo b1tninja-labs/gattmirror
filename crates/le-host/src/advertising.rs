@@ -1,4 +1,9 @@
 //! Advertising data encoding and the advertising parameter block.
+//!
+//! Anchors: Bluetooth Core Specification 6.3 (final, 2026-03), Vol 4 Part E §7.8.5 (parameter
+//! block), §7.8.7 and §7.8.8 (a length byte then 31 octets, length 0 to 31, default all zero). The
+//! AD type numbers and the Flags bit values live in the Core Specification Supplement and the
+//! Assigned Numbers, which are not in the corpus: they stay `[unread]`.
 
 use core::fmt;
 
@@ -10,7 +15,8 @@ const AD_SHORT_NAME: u8 = 0x08;
 const AD_COMPLETE_NAME: u8 = 0x09;
 const AD_UUID16_COMPLETE: u8 = 0x03;
 const AD_UUID128_COMPLETE: u8 = 0x07;
-/// LE General Discoverable plus "BR/EDR not supported". `[unread]`: value not read from the spec.
+/// LE General Discoverable plus "BR/EDR not supported". `[unread]`: the Flags bit values are in the
+/// Core Specification Supplement, which the corpus does not hold.
 const FLAGS_LE_GENERAL_NO_BREDR: u8 = 0x06;
 
 /// A service UUID to advertise.
@@ -140,8 +146,11 @@ impl Default for AdvParams {
 }
 
 impl AdvParams {
-    /// Encode for a connectable undirected advertisement (type 0), public own address, all three
-    /// channels, no filter. `[unread]`: field order observed accepted by a live controller.
+    /// Encode for a connectable undirected advertisement, public own address, all three channels,
+    /// no filter. Core 6.3 §7.8.5 order: interval min and max (2 each, units of 0.625 ms, range
+    /// `0x0020..=0x4000`), `Advertising_Type` (`0x00` is `ADV_IND`, connectable and scannable),
+    /// `Own_Address_Type` (`0x00` public), `Peer_Address_Type`, `Peer_Address` (6), channel map
+    /// (`0x07` is channels 37, 38 and 39) and filter policy (`0x00` accepts everyone).
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut v = Vec::with_capacity(15);
@@ -222,7 +231,11 @@ mod tests {
         .encode();
         assert_eq!(p.len(), 15);
         assert_eq!(&p[..5], [0x20, 0x00, 0x40, 0x00, 0x00]);
+        // Own address type public, peer type and address unused, channel map, filter policy.
+        assert_eq!(p[5], 0x00);
+        assert_eq!(&p[6..13], [0; 7]);
         assert_eq!(p[13], 0x07);
+        assert_eq!(p[14], 0x00);
     }
 
     #[test]

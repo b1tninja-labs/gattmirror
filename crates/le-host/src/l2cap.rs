@@ -1,7 +1,11 @@
 //! L2CAP framing over ACL: reassembly, fragmentation, and the fixed-channel replies.
 //!
-//! Channel ids, command codes and the reply layouts are from memory, not the specification, and
-//! are `[unread]` in `ROADMAP.md`.
+//! Anchors: Bluetooth Core Specification 6.3 (final, 2026-03). Vol 3 Part A §4 (signalling command
+//! codes, Table 4.2; Command Reject §4.1, Figure 4.3), the LE signalling channel is CID `0x0005`
+//! (Vol 3 Part A, channel identifiers); Vol 3 Part H §3.3 (SMP command codes) and §3.5.5 (Pairing
+//! Failed, reason `0x05` Pairing Not Supported); Vol 4 Part E §5.4.2 (ACL header). The ATT and SMP
+//! channel ids (`0x0004`, `0x0006`) are in the same fixed-channel table, which the corpus search
+//! reached only through a mislabelled section and which was not read in full: see `ROADMAP.md`.
 
 use hci_wire::{Packet, PacketBoundary};
 
@@ -112,16 +116,33 @@ pub fn fragment(handle: u16, cid: u16, payload: &[u8], max: usize) -> Vec<Packet
 }
 
 /// The reply to a signalling-channel frame: a Command Reject (code `01`, reason 0, "command not
-/// understood") for any request, and nothing for a response. Requests are the even codes. `[unread]`
+/// understood") for a request or an unknown code, and nothing for a response or an indication.
+///
+/// Core 6.3 Vol 3 Part A §4 Table 4.2: the responses are `01`, `03`, `05`, `07`, `09`, `0B`, `13`,
+/// `15`, `18` and `1A`; `16` (credit indication) takes no reply; the requests are `02`, `04`, `06`,
+/// `08`, `0A`, `12`, `14`, `17` and `19`. Every other code is unknown, and §4.1 says an unknown
+/// code is always rejected. Parity is not the rule: `17` and `19` are odd requests.
 pub fn signalling_reply(payload: &[u8]) -> Option<Vec<u8>> {
     let (&code, &id) = (payload.first()?, payload.get(1)?);
-    (code != 0 && code % 2 == 0).then(|| vec![0x01, id, 0x02, 0x00, 0x00, 0x00])
+    let silent = matches!(
+        code,
+        0x01 | 0x03 | 0x05 | 0x07 | 0x09 | 0x0B | 0x13 | 0x15 | 0x16 | 0x18 | 0x1A
+    );
+    (!silent).then(|| vec![0x01, id, 0x02, 0x00, 0x00, 0x00])
 }
 
 /// The reply to a Security Manager frame: Pairing Failed (code `05`) with reason `05` (pairing not
-/// supported) to a Pairing Request (code `01`), and nothing otherwise. `[unread]`
+/// supported) to any command except Pairing Failed itself, which ends the procedure.
+///
+/// Core 6.3 Vol 3 Part H §3.3: a device that does not support pairing "shall respond with a Pairing
+/// Failed command with the reason set to Pairing Not Supported" to any command received. Replying
+/// to a Pairing Failed would loop with a peer that does the same, so that one is left alone; the
+/// specification text read does not say either way.
 pub fn smp_reply(payload: &[u8]) -> Option<Vec<u8>> {
-    (payload.first() == Some(&0x01)).then(|| vec![0x05, 0x05])
+    match payload.first() {
+        None | Some(0x05) => None,
+        Some(_) => Some(vec![0x05, 0x05]),
+    }
 }
 
 #[cfg(test)]
@@ -229,9 +250,30 @@ mod tests {
         assert_eq!(signalling_reply(&[0x01, 7, 2, 0, 0, 0]), None);
     }
 
+    /// Table 4.2: `17` (credit based connection request) is an odd-numbered request, and unknown
+    /// codes are rejected whatever their parity.
+    #[test]
+    fn odd_requests_and_unknown_codes_are_rejected() {
+        let reject = Some(vec![1, 9, 2, 0, 0, 0]);
+        assert_eq!(signalling_reply(&[0x17, 9, 0, 0]), reject);
+        assert_eq!(signalling_reply(&[0x19, 9, 0, 0]), reject);
+        assert_eq!(signalling_reply(&[0x1B, 9, 0, 0]), reject);
+        assert_eq!(signalling_reply(&[0x0D, 9, 0, 0]), reject);
+        assert_eq!(signalling_reply(&[0x16, 9, 0, 0]), None);
+        assert_eq!(signalling_reply(&[0x18, 9, 0, 0]), None);
+    }
+
     #[test]
     fn pairing_is_refused() {
         assert_eq!(smp_reply(&[1, 3, 0, 1, 16, 0, 0]), Some(vec![5, 5]));
-        assert_eq!(smp_reply(&[0x0B, 0]), None);
+        assert_eq!(smp_reply(&[]), None);
+    }
+
+    /// §3.3: any command, not only Pairing Request, gets Pairing Failed; a Pairing Failed does not.
+    #[test]
+    fn any_smp_command_is_answered_with_pairing_not_supported() {
+        assert_eq!(smp_reply(&[0x0B, 0]), Some(vec![5, 5]));
+        assert_eq!(smp_reply(&[0x03, 0]), Some(vec![5, 5]));
+        assert_eq!(smp_reply(&[0x05, 0x05]), None);
     }
 }

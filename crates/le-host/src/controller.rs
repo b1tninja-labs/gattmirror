@@ -9,12 +9,21 @@ use hci_wire::{Decoder, Event, Opcode, Packet, opcodes};
 use crate::advertising::{AdvParams, Advertisement, padded};
 
 /// The event code a not-yet-reset controller answers every command with (observed live: `10 01 42`).
-const EVENT_NOT_READY: u8 = 0x10;
+///
+/// Divergence: Core 6.3 §7.7.16 defines `0x10` as Hardware Error, an implementation-specific
+/// hardware failure report, and says nothing about commands sent before Reset. Rootcanal's use of
+/// it for "not reset" is its own behaviour; a real controller sending Hardware Error is also
+/// reported as [`Error::NotReset`] here.
+const EVENT_NOT_READY: u8 = hci_wire::EventCode::HARDWARE_ERROR.0;
 /// The no-operation opcode controllers use to hand out command credits unprompted.
 const NOP: Opcode = Opcode(0x0000);
-/// Set Event Mask: the default mask plus the LE Meta bit. `[unread]`
+/// Set Event Mask (Core 6.3 §7.3.1): bits 0 to 44 (the specified default, `0x1FFF FFFF FFFF`) plus
+/// bit 61, `HCI_LE_Meta`. Disconnection Complete is bit 4; Number Of Completed Packets has no bit
+/// and cannot be masked.
 const EVENT_MASK: [u8; 8] = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0x00, 0x20];
-/// LE Set Event Mask: the first five LE subevents. `[unread]`
+/// LE Set Event Mask [v1] (Core 6.3 §7.8.1): bits 0 to 4, the specified default (Connection
+/// Complete, Advertising Report, Connection Update Complete, Read Remote Features Complete, Long
+/// Term Key Request). The LE Enhanced Connection Complete event (bit 9) is therefore never sent.
 const LE_EVENT_MASK: [u8; 8] = [0x1F, 0, 0, 0, 0, 0, 0, 0];
 
 /// What the controller reported during [`Controller::init`].
@@ -48,6 +57,9 @@ pub enum Error {
         /// The nonzero status byte.
         status: u8,
     },
+    /// `LE_ACL_Data_Packet_Length` was zero: no dedicated LE buffer exists and the shared
+    /// `HCI_Read_Buffer_Size` would be needed (Core 6.3 §7.8.2), which this host does not issue.
+    NoLeBuffer,
     /// A command's answer was too short for what was expected of it.
     ShortReply(Opcode),
     /// Advertising data could not be built.
@@ -69,6 +81,7 @@ impl fmt::Display for Error {
                     opcode.0
                 )
             }
+            Self::NoLeBuffer => f.write_str("controller has no dedicated LE ACL buffer"),
             Self::ShortReply(op) => write!(f, "reply to command 0x{:04X} too short", op.0),
             Self::Advertisement(e) => write!(f, "advertisement: {e}"),
         }
@@ -257,16 +270,20 @@ impl<T: Read + Write> Controller<T> {
         let [_, l0, l1, count, ..] = buf[..] else {
             return Err(Error::ShortReply(opcodes::LE_READ_BUFFER_SIZE));
         };
+        let le_acl_len = u16::from_le_bytes([l0, l1]);
+        if le_acl_len == 0 || count == 0 {
+            return Err(Error::NoLeBuffer);
+        }
         Ok(ControllerInfo {
             bd_addr,
-            le_acl_len: u16::from_le_bytes([l0, l1]),
+            le_acl_len,
             le_acl_count: count,
         })
     }
 
     /// Set parameters, advertising data and scan response, and enable connectable advertising.
     /// Advertising already running is disabled first, since a controller may refuse parameter
-    /// changes while it is on. `[unread]`
+    /// changes while it is on (Core 6.3 §7.8.5 lists Command Disallowed `0x0C` for that case).
     ///
     /// # Errors
     ///
@@ -329,6 +346,32 @@ mod tests {
                 opcodes::LE_READ_BUFFER_SIZE
             ]
         );
+    }
+
+    #[test]
+    fn a_controller_with_no_le_buffer_is_refused_at_init() {
+        let mut fake = Fake::default();
+        fake.no_le_buffer();
+        let mut c = Controller::new(fake);
+        assert!(matches!(c.init(), Err(Error::NoLeBuffer)));
+    }
+
+    #[test]
+    fn the_event_masks_enable_what_the_host_reads() {
+        // Core 6.3 §7.3.1: bit 4 Disconnection Complete, bit 61 LE Meta (and the default bits 0..=44).
+        // §7.8.1: LE bit 0 is Connection Complete.
+        let mut c = Controller::new(Fake::default());
+        c.init().unwrap();
+        let log = c.into_inner().commands();
+        let mask = |op| {
+            let (_, p) = log.iter().find(|(o, _)| *o == op).unwrap();
+            u64::from_le_bytes(p[..8].try_into().unwrap())
+        };
+        let event = mask(opcodes::SET_EVENT_MASK);
+        assert_eq!(event & (1 << 4), 1 << 4);
+        assert_eq!(event & (1 << 61), 1 << 61);
+        assert_eq!(event & 0x1FFF_FFFF_FFFF, 0x1FFF_FFFF_FFFF);
+        assert_eq!(mask(opcodes::LE_SET_EVENT_MASK) & 1, 1);
     }
 
     #[test]

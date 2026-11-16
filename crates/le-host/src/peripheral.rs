@@ -1,6 +1,11 @@
 //! One LE connection at a time: connect, ACL, the fixed channels, flow control, re-advertise.
 //!
-//! Event codes, subevent codes and field layouts here are from memory and `[unread]`; each was
+//! Anchors, Bluetooth Core Specification 6.3 Vol 4 Part E §7.7: Disconnection Complete `0x05`
+//! (status, handle, reason; §7.7.5), Number Of Completed Packets `0x13` (count, then handles, then
+//! counts; §7.7.19), LE Meta `0x3E` with subevent `0x01` LE Connection Complete (§7.7.65.1: status,
+//! handle, role, ...) and `0x0A` LE Enhanced Connection Complete (§7.7.65.10: the same prefix; the
+//! LE event mask does not enable it). Disconnect reason `0x13` is one of the values §7.1.6 allows.
+//! Not checked: that the connection's role is Peripheral (role `0x01`). Each was
 //! checked against a live controller where `ROADMAP.md` says so.
 
 use std::collections::VecDeque;
@@ -694,6 +699,26 @@ mod tests {
         });
         let fake = run(&mut p, &h);
         assert_eq!(fake.acl_out().len(), 2);
+    }
+
+    /// Core 6.3 §7.7.19: a count, then every handle, then every packet count. Two pairs, ours second.
+    #[test]
+    fn completed_packets_read_the_handle_array_then_the_count_array() {
+        let (mut p, h, _) = rig(2, |f, t| {
+            f.push_inbound(conn_event(0, H));
+            f.push_inbound(acl(H, CID_ATT, &Pdu::MtuReq { mtu: 247 }.encode()));
+            f.push_inbound(acl(H, CID_ATT, &Pdu::ReadReq { handle: t.long }.encode()));
+            let mut params = vec![2];
+            for handle in [H + 1, H] {
+                params.extend_from_slice(&handle.to_le_bytes());
+            }
+            for count in [9u16, 3] {
+                params.extend_from_slice(&count.to_le_bytes());
+            }
+            f.push_inbound(Packet::Event { code: 0x13, params }.encode());
+        });
+        let fake = run(&mut p, &h);
+        assert_eq!(fake.acl_out().len(), 5);
     }
 
     /// The same load with each packet acknowledged: everything gets out.

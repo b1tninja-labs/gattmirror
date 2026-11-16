@@ -1,21 +1,30 @@
 //! A typed view of the events this project reads.
+//!
+//! Anchors are Bluetooth Core Specification 6.3 (final, 2026-03), Vol 4 Part E §7.7: Disconnection
+//! Complete §7.7.5, Command Complete §7.7.14, Command Status §7.7.15, Hardware Error §7.7.16,
+//! Number Of Completed Packets §7.7.19, LE Connection Complete §7.7.65.1 and LE Enhanced
+//! Connection Complete §7.7.65.10.
 
 use crate::opcode::Opcode;
 
-/// Event codes seen from a live controller. Not a catalogue.
+/// Event codes, each read from Core 6.3 §7.7. Not a catalogue.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EventCode(pub u8);
 
 impl EventCode {
-    /// Disconnection Complete. `[unread]`
+    /// Disconnection Complete (§7.7.5): status, 16-bit handle, reason.
     pub const DISCONNECTION_COMPLETE: Self = Self(0x05);
-    /// Number Of Completed Packets. `[unread]`
+    /// Number Of Completed Packets (§7.7.19): a count of pairs, then each handle, then each count.
     pub const NUMBER_OF_COMPLETED_PACKETS: Self = Self(0x13);
-    /// Command Complete.
+    /// Hardware Error (§7.7.16): one implementation-specific `Hardware_Code` byte. The specification
+    /// says nothing about a command sent before Reset; a controller that answers one with this
+    /// event (Rootcanal does) is doing something the specification does not describe.
+    pub const HARDWARE_ERROR: Self = Self(0x10);
+    /// Command Complete (§7.7.14).
     pub const COMMAND_COMPLETE: Self = Self(0x0E);
-    /// Command Status.
+    /// Command Status (§7.7.15).
     pub const COMMAND_STATUS: Self = Self(0x0F);
-    /// LE Meta: the first parameter byte is a subevent code.
+    /// LE Meta (§7.7.65): the first parameter byte is a subevent code.
     pub const LE_META: Self = Self(0x3E);
 }
 
@@ -117,12 +126,20 @@ mod tests {
         assert_eq!(return_params, [0x00, 0x1B, 0x00, 0x14]);
     }
 
+    /// Layout of §7.7.15: Status, then `Num_HCI_Command_Packets`, then the opcode.
     #[test]
     fn command_status_layout() {
         let e = Event::parse(0x0F, &[0x00, 0x01, 0x0D, 0x20]);
         assert!(
             matches!(e, Event::CommandStatus { status: 0, num_packets: 1, opcode } if opcode.0 == 0x200D)
         );
+    }
+
+    #[test]
+    fn event_codes_have_the_values_in_the_specification() {
+        assert_eq!(super::EventCode::HARDWARE_ERROR.0, 0x10);
+        assert_eq!(super::EventCode::DISCONNECTION_COMPLETE.0, 0x05);
+        assert_eq!(super::EventCode::NUMBER_OF_COMPLETED_PACKETS.0, 0x13);
     }
 
     #[test]
