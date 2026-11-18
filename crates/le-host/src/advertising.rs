@@ -10,7 +10,10 @@ const AD_SHORT_NAME: u8 = 0x08;
 const AD_COMPLETE_NAME: u8 = 0x09;
 const AD_UUID16_COMPLETE: u8 = 0x03;
 const AD_UUID128_COMPLETE: u8 = 0x07;
-/// LE General Discoverable plus "BR/EDR not supported". `[unread]`: value not read from the spec.
+/// LE General Discoverable and BR/EDR Not Supported, which is what Core Specification 7.0
+/// §3.C.9.2.4.2 requires of an LE-only device in general discoverable mode. The bit positions
+/// that pack those flags into this byte are in the Core Specification Supplement, Part A, §1.3,
+/// which is not imported, so the value `0x06` is still unread.
 const FLAGS_LE_GENERAL_NO_BREDR: u8 = 0x06;
 
 /// A service UUID to advertise.
@@ -140,8 +143,10 @@ impl Default for AdvParams {
 }
 
 impl AdvParams {
-    /// Encode for a connectable undirected advertisement (type 0), public own address, all three
-    /// channels, no filter. `[unread]`: field order observed accepted by a live controller.
+    /// Encode the 15-octet block of `HCI_LE_Set_Advertising_Parameters` (Core Specification 7.0
+    /// §4.E.7.8.5): the two intervals, type `0x00` (connectable and scannable undirected), a public
+    /// own address, a public peer-address type, six zero peer-address octets, channel map `0x07`,
+    /// and filter policy `0x00`.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut v = Vec::with_capacity(15);
@@ -157,7 +162,9 @@ impl AdvParams {
     }
 }
 
-/// Lay data out as the data commands take it: a length byte and 31 data bytes, zero padded.
+/// Lay data out as `HCI_LE_Set_Advertising_Data` takes it (Core Specification 7.0 §4.E.7.8.7):
+/// one length octet, then 31 octets. The octets past the significant part are zero, which is the
+/// non-significant part in §3.C.11.
 pub(crate) fn padded(data: &[u8]) -> Vec<u8> {
     debug_assert!(data.len() <= MAX_AD_LEN);
     let mut v = Vec::with_capacity(MAX_AD_LEN + 1);

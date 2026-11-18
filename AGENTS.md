@@ -22,8 +22,10 @@ issues no vehicle writes. Read `PLAN.md` for the crates and `ROADMAP.md` for the
 
 - First-party dependencies only (`std`; Microsoft's `windows` crate for the Windows client). Say why in the
   commit message before adding anything else.
-- The Bluetooth Core Specification is not yet in `primarysource`. Do not cite a section or quote normative
-  wording from memory: verify against a live controller and mark the row `[unread]`.
+- The Bluetooth Core Specification is imported as `bluetooth:core-specification-7-0`. Cite a section
+  only after reading it with the `bluetooth_*` tools, and do not copy normative wording into the tree.
+  The Core Specification Supplement, Part A (the advertising-data type identifiers and the Flags bit
+  field) is not imported. A number that lives only there stays `[unread]`.
 - No Bluetooth addresses, adapter names, VINs or local paths in the tree.
 - `[ok]` needs a break: change the code, watch the named test fail, revert.
 
