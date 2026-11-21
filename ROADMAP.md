@@ -10,15 +10,16 @@ keeps its own rows in `crates/<name>/ROADMAP.md`; this file holds the rows that 
 Status:
 
 - `[ok]` the named test exists, passes, and failed when the code it covers was deliberately broken.
-- `[unread]` implemented and a test passes, but the anchor is not a standard that has been read (here: no
-  Bluetooth Core Specification text is available, so behaviour was verified against a live controller only).
+- `[unread]` implemented and a test passes, but the anchor has not been read. Core Specification 7.0
+  is imported. The Core Specification Supplement, Part A, is not, and that is where the advertising-data
+  type identifiers and the Flags bit field are defined.
 - `[open]` not proven, not done, or needs hardware or a human decision.
 
 ## Wave 0: ground truth
 
 | Status | Obligation | Anchor | Test |
 |---|---|---|---|
-| [open] | The Bluetooth Core Specification (Vol 2 Part E, Vol 3 Parts A, C, F, G) is available as a `primarysource` collection so every ATT, L2CAP and HCI row can cite a section. Needs the owner to accept the SIG licence and fetch it | Bluetooth Core Specification | none: a document gate, not code |
+| [open] | Core Specification 7.0 is imported (`bluetooth:core-specification-7-0`). Advertising layout was read at Vol 3 Part C §11 and Vol 4 Part E §7.8.5 and §7.8.7. The Core Specification Supplement, Part A, is not imported, so advertising-data type identifiers and the Flags bit field stay `[unread]` | read 2026-11-17 via `bluetooth_*` | none: the supplement is the remaining document gate |
 | [ok] | The emulator's H4 socket answers a host that sends Reset first, and answers a command sent before Reset with event `0x10` | observed, `docs/research.md` | `crates/hci-wire/tests/live_controller.rs`; see `crates/hci-wire/ROADMAP.md` (needs `GATTMIRROR_HCI`, not run in CI) |
 
 ## Spanning gates (need more than one crate)
