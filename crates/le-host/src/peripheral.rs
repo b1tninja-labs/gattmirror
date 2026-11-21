@@ -701,21 +701,15 @@ mod tests {
         assert_eq!(fake.acl_out().len(), 2);
     }
 
-    /// Core 6.3 §7.7.19: a count, then every handle, then every packet count. Two pairs, ours second.
+    /// Core 6.3 §7.7.19: a count, then every handle, then every packet count. Two pairs, ours second,
+    /// sent after each ACL write so that packets are in flight when it arrives.
     #[test]
     fn completed_packets_read_the_handle_array_then_the_count_array() {
         let (mut p, h, _) = rig(2, |f, t| {
+            f.complete_acl_in_two_pairs();
             f.push_inbound(conn_event(0, H));
             f.push_inbound(acl(H, CID_ATT, &Pdu::MtuReq { mtu: 247 }.encode()));
             f.push_inbound(acl(H, CID_ATT, &Pdu::ReadReq { handle: t.long }.encode()));
-            let mut params = vec![2];
-            for handle in [H + 1, H] {
-                params.extend_from_slice(&handle.to_le_bytes());
-            }
-            for count in [9u16, 3] {
-                params.extend_from_slice(&count.to_le_bytes());
-            }
-            f.push_inbound(Packet::Event { code: 0x13, params }.encode());
         });
         let fake = run(&mut p, &h);
         assert_eq!(fake.acl_out().len(), 5);
