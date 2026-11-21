@@ -53,17 +53,18 @@ pub mod opcodes {
     pub const LE_READ_BUFFER_SIZE: Opcode = Opcode::new(0x08, 0x002);
     /// LE Set Advertising Enable (LE group `0x08`, command `0x00A`).
     pub const LE_SET_ADVERTISING_ENABLE: Opcode = Opcode::new(0x08, 0x00A);
-    /// Set Event Mask (controller and baseband group `0x03`, command `0x001`). `[unread]`
+    /// Set Event Mask (controller and baseband group `0x03`, command `0x001`). §4.E.7.3.1.
     pub const SET_EVENT_MASK: Opcode = Opcode::new(0x03, 0x001);
-    /// LE Set Event Mask (LE group `0x08`, command `0x001`). `[unread]`
+    /// LE Set Event Mask v1 (LE group `0x08`, command `0x001`). §4.E.7.8.1. v2 is a different command.
     pub const LE_SET_EVENT_MASK: Opcode = Opcode::new(0x08, 0x001);
-    /// LE Set Advertising Parameters (LE group `0x08`, command `0x006`). `[unread]`
+    /// LE Set Advertising Parameters (LE group `0x08`, command `0x006`). §4.E.7.8.5.
     pub const LE_SET_ADVERTISING_PARAMETERS: Opcode = Opcode::new(0x08, 0x006);
-    /// LE Set Advertising Data (LE group `0x08`, command `0x008`). `[unread]`
+    /// LE Set Advertising Data (LE group `0x08`, command `0x008`). §4.E.7.8.7.
+    /// The advertising-data type identifiers inside the parameter are not this opcode.
     pub const LE_SET_ADVERTISING_DATA: Opcode = Opcode::new(0x08, 0x008);
-    /// LE Set Scan Response Data (LE group `0x08`, command `0x009`). `[unread]`
+    /// LE Set Scan Response Data (LE group `0x08`, command `0x009`). §4.E.7.8.8.
     pub const LE_SET_SCAN_RESPONSE_DATA: Opcode = Opcode::new(0x08, 0x009);
-    /// Disconnect (link control group `0x01`, command `0x006`). `[unread]`
+    /// Disconnect (link control group `0x01`, command `0x006`). §4.E.7.1.6.
     pub const DISCONNECT: Opcode = Opcode::new(0x01, 0x006);
 }
 

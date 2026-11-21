@@ -7,8 +7,8 @@
 //! - [`Mirror`] owns the [`att_server::Server`] and relays between it and the backend.
 //! - [`sim`] is a test dummy adapter; [`cli`] parses the command line.
 //!
-//! Nothing here parses an application protocol. The Bluetooth Core Specification was not
-//! available, so no behaviour is cited to a section; see `ROADMAP.md`.
+//! Nothing here parses an application protocol. Citations live in the crate `ROADMAP.md` files.
+//! Advertising-data type identifiers and the Flags bit field are not cited.
 
 pub mod backend;
 pub mod cli;

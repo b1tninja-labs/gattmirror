@@ -5,8 +5,8 @@ use core::fmt;
 use crate::opcode::Opcode;
 use crate::packet::{Packet, PacketType};
 
-/// A framing error. The stream cannot be resynchronised after one: H4 has no delimiter, so the
-/// caller should drop the connection.
+/// A framing error. This decoder leaves the bad indicator in place. §4.A.4 describes a Reset
+/// recovery this crate does not perform.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     /// The byte where a packet should start is not a known packet indicator.

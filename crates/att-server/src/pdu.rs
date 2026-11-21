@@ -1,6 +1,6 @@
 use crate::uuid::Uuid;
 
-/// ATT opcodes. Values are from memory of the protocol and are `[unread]`; see `ROADMAP.md`.
+/// ATT opcodes. Core Specification 7.0 §3.F.3.4.8; see `ROADMAP.md`.
 pub mod opcode {
     /// Error Response.
     pub const ERROR_RSP: u8 = 0x01;

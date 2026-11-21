@@ -2,8 +2,8 @@
 //!
 //! This crate initialises a controller, advertises, and serves one ATT connection at a time over
 //! the LE fixed channels (see [`Peripheral`]).
-//! The Bluetooth Core Specification text was not available: every constant here was checked
-//! against a live controller only, and the rows in `ROADMAP.md` say `[unread]` accordingly.
+//! Rows in `ROADMAP.md` name the Core Specification 7.0 sections that were read. Advertising-data
+//! type identifiers and the Flags bit field are not among them.
 
 mod advertising;
 mod controller;

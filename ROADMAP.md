@@ -9,23 +9,46 @@ keeps its own rows in `crates/<name>/ROADMAP.md`; this file holds the rows that 
 
 Status:
 
-- `[ok]` the named test exists, passes, and failed when the code it covers was deliberately broken.
-- `[unread]` implemented and a test passes, but the anchor is not a standard that has been read (here: no
-  Bluetooth Core Specification text is available, so behaviour was verified against a live controller only).
+- `[ok]` the named test exists, passes, and failed when the code it covers was deliberately broken. A standard
+  named in that row was read.
+- `[unread]` implemented and a test passes, but the text that would prove the row was not read, or was read
+  and the test does not prove the layout. Advertising-data type identifiers and the Flags bit field are in
+  this group: the Core Specification Supplement, Part A, and Assigned Numbers are not imported.
 - `[open]` not proven, not done, or needs hardware or a human decision.
 
 ## Wave 0: ground truth
 
 | Status | Obligation | Anchor | Test |
 |---|---|---|---|
-| [open] | The Bluetooth Core Specification (Vol 2 Part E, Vol 3 Parts A, C, F, G) is available as a `primarysource` collection so every ATT, L2CAP and HCI row can cite a section. Needs the owner to accept the SIG licence and fetch it | Bluetooth Core Specification | none: a document gate, not code |
-| [ok] | The emulator's H4 socket answers a host that sends Reset first, and answers a command sent before Reset with event `0x10` | observed, `docs/research.md` | `crates/hci-wire/tests/live_controller.rs`; see `crates/hci-wire/ROADMAP.md` (needs `GATTMIRROR_HCI`, not run in CI) |
+| [open] | Core Specification 7.0 is imported as `bluetooth:core-specification-7-0`. The HCI command, ACL, and event sections and the ATT opcode summary cited in the crate roadmaps were read on 2026-11-21. The Core Specification Supplement, Part A, and Assigned Numbers are not imported, so advertising-data type identifiers and the Flags bit field stay unread | `crates/hci-wire/ROADMAP.md`, `crates/att-server/ROADMAP.md` | none: the supplement is the remaining document gate |
+| [ok] | The emulator's H4 socket answers a host that sends Reset first, and answers a command sent before Reset with event `0x10` | observed, `docs/research.md`. §4.E.7.7.16 names event `0x10` Hardware Error; the pre-Reset observation is recorded in `crates/hci-wire/ROADMAP.md` | `crates/hci-wire/tests/live_controller.rs`; see `crates/hci-wire/ROADMAP.md` (needs `GATTMIRROR_HCI`, not run in CI) |
+
+Sections read on 2026-11-21. The supplement and Assigned Numbers are not in this picture, so the Flags bit field and advertising-data type numbers are not nodes.
+
+```mermaid
+flowchart TD
+  core["Core Specification 7.0"]
+  h4["H4 indicators §4.A.2"]
+  cmd["Command packet §4.E.5.4.1"]
+  acl["ACL header §4.E.5.4.2"]
+  complete["Command Complete §4.E.7.7.14"]
+  status["Command Status §4.E.7.7.15"]
+  att["ATT PDU §3.F.3.3.1"]
+  opcodes["ATT opcodes §3.F.3.4.8"]
+  core --> h4
+  core --> cmd
+  core --> acl
+  core --> complete
+  core --> status
+  h4 --> att
+  att --> opcodes
+```
 
 ## Spanning gates (need more than one crate)
 
 | Status | Obligation | Anchor | Test |
 |---|---|---|---|
-| [open] | **E1.** The emulated phone's BLE scan lists a mirrored device by the real adapter's name | Bluetooth Core Specification (advertising); unread | none yet |
+| [open] | **E1.** The emulated phone's BLE scan lists a mirrored device by the real adapter's name | Advertising-data type identifiers and the Flags bit field stay unread. The HCI opcodes for the advertising commands are cited in `crates/hci-wire/ROADMAP.md` | none yet |
 | [open] | **E2.** The guest completes GATT service discovery against the virtual peripheral and sees the mirrored table | Bluetooth Core Specification Vol 3 Parts F, G; unread | none yet |
 | [open] | **E3.** A guest write to the mirrored write characteristic reaches a simulated adapter and its notification returns to the guest (no hardware) | none: end-to-end, project-defined | none yet |
 | [open] | **E4.** The Voltage app in BLE mode selects the mirrored adapter and runs its ELM327 init against the simulated adapter | none: end-to-end | none yet; needs the emulator and the app |

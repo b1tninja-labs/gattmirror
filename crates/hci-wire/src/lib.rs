@@ -6,8 +6,8 @@
 //! stream. It knows packet framing and a handful of opcodes; it implements no host stack.
 //!
 //! Everything here was checked against a live `netsimd` controller (see `tests/live_controller.rs`).
-//! The Bluetooth Core Specification text was **not** available when this was written, so none of it
-//! is cited to a section; see `ROADMAP.md`.
+//! The sections named in `ROADMAP.md` were read from Core Specification 7.0. Advertising-data type
+//! identifiers and the Flags bit field are not in that text.
 
 mod decoder;
 mod event;

@@ -1,16 +1,17 @@
 # att-server roadmap
 
-An ATT PDU codec, a GATT attribute table and a per-connection server, with no I/O. The Bluetooth Core Specification
-was not available when this was written (see the root `ROADMAP.md`, Wave 0), so every behaviour below that the
-specification defines is `[unread]`: implemented from memory of the protocol, tested against itself, and not
-checked against a live peer. `[ok]` is used only for properties that no standard defines, or that are bookkeeping
-of this crate. Break notes say what was changed to make the named test fail.
+An ATT PDU codec, a GATT attribute table and a per-connection server, with no I/O. Core Specification 7.0 is
+imported. On 2026-11-21 the reads were §3.F.3.3.1 (PDU format) and §3.F.3.4.8 (opcode summary). Every other
+row whose anchor says "unread" has not had its section read. The Core Specification Supplement, Part A, and
+Assigned Numbers are not imported; this crate does not define advertising-data types or the Flags bit field.
+`[ok]` is a read section whose named test was broken, or bookkeeping no standard defines. Break notes say what
+was changed to make the named test fail.
 
 Anchor "Bluetooth Core Specification, unread" means Vol 3 Part F (ATT) or Part G (GATT), section not read.
 
 | Status | Obligation | Anchor | Test |
 |---|---|---|---|
-| [unread] | PDUs encode with the opcode first and 16-bit fields little-endian; the opcodes in `pdu::opcode` have the values given | Bluetooth Core Specification, unread | `src/pdu.rs::exact_wire_bytes`, `every_variant_round_trips`; broken by writing 16-bit fields big-endian (3 failed) |
+| [ok] | PDUs encode with the opcode first and 16-bit fields little-endian; the opcodes in `pdu::opcode` have the values given | Core Specification 7.0 §3.F.3.3.1 (opcode octet, then parameters; multi-octet fields little-endian, attribute-value endianness left to the higher layer; the command flag is bit 6) and §3.F.3.4.8 (the opcode summary, including Write Command `0x52`). Read 2026-11-21. Opcodes in that table which this crate does not model stay out of `pdu::opcode` | `src/pdu.rs::exact_wire_bytes`, `every_variant_round_trips`; broken by writing 16-bit fields big-endian (3 failed) |
 | [unread] | A PDU with the wrong parameter length, a bad list entry length or an unknown Find Information format fails to decode | Bluetooth Core Specification, unread | `src/pdu.rs::malformed_pdus_are_refused`; broken by accepting a longer Read Request |
 | [unread] | Find Information responses carry a format byte (1: 16-bit UUIDs, 2: 128-bit) matching the entries | Bluetooth Core Specification, unread | `src/pdu.rs::find_info_format_byte_follows_uuid_width`; broken by swapping the two format values |
 | [unread] | A 128-bit UUID on the Bluetooth base UUID is the same UUID as its 16-bit form, and goes on the wire short | Bluetooth Core Specification, unread | `src/uuid.rs::*`; broken by shifting the 16-bit field into the base (6 failed) |
