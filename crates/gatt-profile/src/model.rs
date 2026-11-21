@@ -2,7 +2,8 @@ use crate::uuid::Uuid;
 
 /// Characteristic property bits, one byte as carried in a characteristic declaration.
 ///
-/// Bit positions follow the usual GATT layout; they are `[unread]` (see the crate roadmap).
+/// Bit positions: Core Specification 7.0, Vol 3 Part G, Table 3.5. In 7.0 bit `0x40` is "previously
+/// used"; Core 6.0 names it Authenticated Signed Writes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Properties(pub u8);
 
@@ -19,7 +20,7 @@ impl Properties {
     pub const NOTIFY: u8 = 0x10;
     /// Indicate.
     pub const INDICATE: u8 = 0x20;
-    /// Authenticated signed writes.
+    /// Authenticated signed writes (`0x40`; marked previously used in Core 7.0).
     pub const SIGNED_WRITE: u8 = 0x40;
     /// Extended properties descriptor present.
     pub const EXTENDED: u8 = 0x80;

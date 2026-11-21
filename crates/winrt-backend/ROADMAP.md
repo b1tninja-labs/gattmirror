@@ -1,8 +1,9 @@
 # winrt-backend roadmap
 
 `gattmirror::Backend` over `winrt-gatt`'s reconnecting adapter. Transport only. The Windows constructor
-(`connect`) is compile-checked and has never been run; the Bluetooth Core Specification is not available, so
-no row cites it. Depends on the `Backend` trait from `crates/gattmirror`.
+(`connect`) is compile-checked and has never been run. The only Bluetooth fact it relies on, a write or notification
+carrying at most ATT_MTU-3 value octets, is Core Specification 7.0 Vol 3 Part F §3.2.9 and §3.4.7.1 (also cited in
+the `winrt-gatt` roadmap). Depends on the `Backend` trait from `crates/gattmirror`.
 
 | Status | Obligation | Anchor | Test |
 |---|---|---|---|

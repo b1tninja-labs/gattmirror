@@ -3,10 +3,25 @@ use std::fmt;
 use crate::model::{Profile, ServiceKind};
 use crate::uuid::Uuid;
 
-/// The attribute type UUIDs [`Profile::attributes`] uses. `[unread]`: taken from common knowledge of
-/// GATT, not from the specification.
+/// The attribute type UUIDs [`Profile::attributes`] uses.
+///
+/// Values: Core Specification 7.0, Vol 3 Part G, Tables 3.1 (`2800`, `2801`), 3.2 (`2802`), 3.3 (`2803`),
+/// 3.7 (`2900`), 3.9 (`2901`), 3.10 (`2902`), 3.12 (`2903`) and 3.14 (`2904`).
 pub mod type_uuids {
     use crate::uuid::Uuid;
+
+    /// Include declaration.
+    pub const INCLUDE: Uuid = Uuid::from_u16(0x2802);
+    /// Characteristic Extended Properties descriptor.
+    pub const CHARACTERISTIC_EXTENDED_PROPERTIES: Uuid = Uuid::from_u16(0x2900);
+    /// Characteristic User Description descriptor.
+    pub const CHARACTERISTIC_USER_DESCRIPTION: Uuid = Uuid::from_u16(0x2901);
+    /// Client Characteristic Configuration descriptor.
+    pub const CLIENT_CHARACTERISTIC_CONFIGURATION: Uuid = Uuid::from_u16(0x2902);
+    /// Server Characteristic Configuration descriptor.
+    pub const SERVER_CHARACTERISTIC_CONFIGURATION: Uuid = Uuid::from_u16(0x2903);
+    /// Characteristic Presentation Format descriptor.
+    pub const CHARACTERISTIC_PRESENTATION_FORMAT: Uuid = Uuid::from_u16(0x2904);
 
     /// Primary service declaration.
     pub const PRIMARY_SERVICE: Uuid = Uuid::from_u16(0x2800);
@@ -14,6 +29,14 @@ pub mod type_uuids {
     pub const SECONDARY_SERVICE: Uuid = Uuid::from_u16(0x2801);
     /// Characteristic declaration.
     pub const CHARACTERISTIC: Uuid = Uuid::from_u16(0x2803);
+}
+
+/// Client Characteristic Configuration bits (Core Specification 7.0, Vol 3 Part G, Table 3.11).
+pub mod cccd {
+    /// Bit 0: the value shall be notified.
+    pub const NOTIFICATION: u16 = 0x0001;
+    /// Bit 1: the value shall be indicated.
+    pub const INDICATION: u16 = 0x0002;
 }
 
 /// What an attribute is, beyond its type.
@@ -74,7 +97,9 @@ impl Profile {
     ///
     /// Per service: a declaration (value is the service UUID, little-endian), then per characteristic a
     /// declaration (value is properties, value handle, characteristic UUID), the value attribute, and
-    /// its descriptors. The layout is `[unread]` against the specification.
+    /// its descriptors. Layout: Core Specification 7.0, Vol 3 Part G, Tables 3.1, 3.3, 3.4 and 3.6;
+    /// multi-octet ATT fields are little-endian (Vol 3 Part F, 3.3.1); a 16-bit UUID is two octets and any
+    /// other is sixteen (Part G, 2.5.4).
     ///
     /// # Errors
     /// [`AttributeError::TooManyAttributes`] when handles would pass `0xffff`.

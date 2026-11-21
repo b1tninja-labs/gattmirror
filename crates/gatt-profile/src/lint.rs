@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fmt;
 
+use crate::attribute::type_uuids;
 use crate::model::{Characteristic, Profile, Properties, Service};
 use crate::uuid::Uuid;
 
@@ -42,6 +43,8 @@ pub enum IssueKind {
     ExtendedWithoutDescriptor,
     /// A `2900` descriptor without the extended-properties bit.
     ExtendedDescriptorWithoutBit,
+    /// The broadcast bit is set but there is no `2903` descriptor (Core 7.0, Vol 3 Part G, Table 3.5).
+    BroadcastWithoutSccd,
 }
 
 impl fmt::Display for IssueKind {
@@ -84,6 +87,9 @@ impl fmt::Display for IssueKind {
             Self::ExtendedDescriptorWithoutBit => {
                 f.write_str("2900 descriptor without the extended property")
             }
+            Self::BroadcastWithoutSccd => {
+                f.write_str("broadcast is set but there is no 2903 descriptor")
+            }
         }
     }
 }
@@ -124,8 +130,9 @@ impl Issue {
     }
 }
 
-const CCCD: Uuid = Uuid::from_u16(0x2902);
-const CEPD: Uuid = Uuid::from_u16(0x2900);
+const CCCD: Uuid = type_uuids::CLIENT_CHARACTERISTIC_CONFIGURATION;
+const CEPD: Uuid = type_uuids::CHARACTERISTIC_EXTENDED_PROPERTIES;
+const SCCD: Uuid = type_uuids::SERVER_CHARACTERISTIC_CONFIGURATION;
 
 fn first_duplicate(uuids: impl Iterator<Item = Uuid>) -> Vec<Uuid> {
     let mut seen = HashSet::new();
@@ -174,6 +181,9 @@ fn lint_characteristic(si: usize, ci: usize, c: &Characteristic, out: &mut Vec<I
     if cepd && !p.contains(Properties::EXTENDED) {
         push(Severity::Warning, IssueKind::ExtendedDescriptorWithoutBit);
     }
+    if p.contains(Properties::BROADCAST) && !c.descriptors.iter().any(|d| d.uuid == SCCD) {
+        push(Severity::Warning, IssueKind::BroadcastWithoutSccd);
+    }
     for u in first_duplicate(c.descriptors.iter().map(|d| d.uuid)) {
         push(Severity::Error, IssueKind::DuplicateDescriptor(u));
     }
@@ -204,8 +214,9 @@ fn lint_service(si: usize, s: &Service, out: &mut Vec<Issue>) {
 impl Profile {
     /// Check the table for internal consistency, returning every finding in table order.
     ///
-    /// The rules are the crate's own reading of what a usable table looks like; none is verified
-    /// against the Core Specification (`[unread]` in the roadmap).
+    /// The CCCD, SCCD and extended-properties rules restate "shall exist" and "shall only be set"
+    /// clauses of Core 7.0, Vol 3 Part G (Tables 3.5, 3.8, 3.11); the rest are the crate's own reading of a
+    /// usable table.
     #[must_use]
     pub fn lint(&self) -> Vec<Issue> {
         let mut out = Vec::new();
