@@ -380,12 +380,27 @@ fn prepare_offsets_and_sizes_are_checked() {
         Pdu::ErrorRsp { code, .. } => Some(code),
         _ => None,
     };
-    assert_eq!(code(&mut s, 513, 1), Some(ErrorCode::InvalidOffset));
-    assert_eq!(code(&mut s, 0xFFFF, 1), Some(ErrorCode::InvalidOffset));
+    // Offsets and total length are validated at Execute Write, not at Prepare Write
+    // (Core 6.3 Vol 3 Part F 3.4.6.1): a wild offset is queued, then refused when executed.
+    let execute = |s: &mut Server<Wild>| match s.handle(&Pdu::ExecuteWriteReq { flags: 1 }).unwrap()
+    {
+        Pdu::ErrorRsp { code, .. } => Some(code),
+        _ => None,
+    };
+    assert_eq!(code(&mut s, 513, 1), None);
+    assert_eq!(execute(&mut s), Some(ErrorCode::InvalidOffset));
+    assert_eq!(code(&mut s, 0xFFFF, 1), None);
+    assert_eq!(execute(&mut s), Some(ErrorCode::InvalidOffset));
+    // Parts that add up to more than the longest attribute value are refused at Execute, and the
+    // queue is cleared by the refusal.
+    for _ in 0..29 {
+        assert_eq!(code(&mut s, 0, 18), None);
+    }
     assert_eq!(
-        code(&mut s, 510, 5),
+        execute(&mut s),
         Some(ErrorCode::InvalidAttributeValueLength)
     );
+    assert_eq!(execute(&mut s), None);
     // A part that would make the echo longer than the MTU is refused rather than echoed oversize.
     assert_eq!(
         code(&mut s, 0, 19),

@@ -14,10 +14,13 @@ const MAX_PREPARED_BYTES: usize = 4 * MAX_VALUE_LEN;
 /// Notifications and indications waiting for the transport; beyond it `notify` fails.
 const MAX_OUTGOING: usize = 256;
 /// How long a transport should wait for an indication confirmation before treating the
-/// connection as lost. The figure is from memory of the Core Specification and is `[unread]`.
+/// connection as lost (Bluetooth Core Specification 6.3 Vol 3 Part F §3.3.3: a transaction not
+/// completed within 30 seconds times out, and the bearer carries no further PDUs).
 pub const CONFIRMATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-/// A CCCD write with bits the characteristic's properties do not allow. The code is from memory
-/// of the Core Specification Supplement and is `[unread]`.
+/// A CCCD write with bits the characteristic's properties do not allow. Core 6.3 Vol 3 Part G
+/// §3.3.3.3 forbids the bits but names no error; 0xFD is a Common Profile and Service Error Code
+/// (the range Part F Table 3.43 allows for writes) that profiles define as "Client Characteristic
+/// Configuration Descriptor Improperly Configured", so using it here is a choice, not a rule.
 const CCCD_IMPROPERLY_CONFIGURED: u8 = 0xFD;
 
 /// A client's Client Characteristic Configuration for one characteristic.
@@ -356,10 +359,11 @@ impl<B: Backend> Server<B> {
     /// The value of the attribute at `idx`, for a read.
     fn read_attr(&mut self, idx: usize) -> Result<Vec<u8>, ErrorCode> {
         let a = &self.db.attrs[idx];
+        // Authentication and authorization come before any other check (Vol 3 Part F §4).
+        self.check_level(a.read_level)?;
         if !a.read {
             return Err(ErrorCode::ReadNotPermitted);
         }
-        self.check_level(a.read_level)?;
         let handle = a.handle;
         match (&a.kind, &a.value) {
             (Kind::Cccd { .. }, _) => Ok(self
@@ -405,10 +409,8 @@ impl<B: Backend> Server<B> {
                 Ok(v) => values.extend_from_slice(&v),
                 Err(e) => return err(REQ, h, e),
             }
-            if values.len() >= self.max_payload() - 1 {
-                break;
-            }
         }
+        // Every handle is checked before the concatenation is cut.
         values.truncate(self.max_payload() - 1);
         Pdu::ReadMultipleRsp { values }
     }
@@ -434,24 +436,34 @@ impl<B: Backend> Server<B> {
         Pdu::FindInfoRsp { entries }
     }
 
-    fn find_by_type_value(&self, start: u16, end: u16, attr_type: u16, value: &[u8]) -> Pdu {
+    fn find_by_type_value(&mut self, start: u16, end: u16, attr_type: u16, value: &[u8]) -> Pdu {
         const REQ: u8 = opcode::FIND_BY_TYPE_VALUE_REQ;
         if start == 0 || start > end {
             return err(REQ, start, ErrorCode::InvalidHandle);
         }
         let want = Uuid::from_u16(attr_type);
-        let ranges: Vec<(u16, u16)> = self.db.attrs[self.db.range(start, end)]
-            .iter()
-            .filter(|a| a.uuid == want && matches!(&a.value, Value::Static(v) if v == value))
-            .map(|a| {
+        let candidates: Vec<usize> = self
+            .db
+            .range(start, end)
+            .filter(|&i| self.db.attrs[i].uuid == want)
+            .collect();
+        let room = (self.max_payload() - 1) / 4;
+        let mut ranges: Vec<(u16, u16)> = Vec::new();
+        for i in candidates {
+            if ranges.len() >= room {
+                break;
+            }
+            // Only attributes the client may read are considered, and a refusal is skipped, never
+            // reported: this request must not answer with a security error.
+            if self.read_attr(i).is_ok_and(|v| v == value) {
+                let a = &self.db.attrs[i];
                 let last = match a.kind {
                     Kind::Service { end } => end,
                     _ => a.handle,
                 };
-                (a.handle, last)
-            })
-            .take((self.max_payload() - 1) / 4)
-            .collect();
+                ranges.push((a.handle, last));
+            }
+        }
         if ranges.is_empty() {
             err(REQ, start, ErrorCode::AttributeNotFound)
         } else {
@@ -502,6 +514,10 @@ impl<B: Backend> Server<B> {
         if start == 0 || start > end {
             return err(REQ, start, ErrorCode::InvalidHandle);
         }
+        if group_type == Uuid::from_u16(0x2801) {
+            // A grouping type the protocol allows; this server has no secondary services.
+            return err(REQ, start, ErrorCode::AttributeNotFound);
+        }
         if group_type != Uuid::from_u16(0x2800) {
             return err(REQ, start, ErrorCode::UnsupportedGroupType);
         }
@@ -535,8 +551,9 @@ impl<B: Backend> Server<B> {
     fn check_writable(&self, handle: u16, with_response: bool) -> Result<usize, ErrorCode> {
         let idx = self.db.index(handle).ok_or(ErrorCode::InvalidHandle)?;
         let a = &self.db.attrs[idx];
+        // Security first, as for reads.
+        self.check_level(a.write_level)?;
         if (with_response && a.write) || (!with_response && a.write_cmd) {
-            self.check_level(a.write_level)?;
             Ok(idx)
         } else {
             Err(ErrorCode::WriteNotPermitted)
@@ -544,8 +561,8 @@ impl<B: Backend> Server<B> {
     }
 
     /// Insufficient Authentication if the attribute needs an authenticated link, Insufficient
-    /// Encryption if only encryption is missing. Which of the two a real server picks when nothing
-    /// is encrypted is `[unread]`.
+    /// Encryption if only encryption is missing. When nothing is encrypted and authentication is
+    /// required both apply, and Part F §3.4.1.1 leaves the choice to the server.
     fn check_level(&self, needed: Level) -> Result<(), ErrorCode> {
         if self.link_level >= needed {
             Ok(())
@@ -597,11 +614,9 @@ impl<B: Backend> Server<B> {
         if let Err(e) = self.check_writable(handle, true) {
             return err(REQ, handle, e);
         }
-        if usize::from(offset) > MAX_VALUE_LEN {
-            return err(REQ, handle, ErrorCode::InvalidOffset);
-        }
-        if usize::from(offset) + value.len() > MAX_VALUE_LEN || value.len() + 5 > self.max_payload()
-        {
+        // The offset and the total length are validated when the queue is executed (Vol 3 Part F
+        // §3.4.6.1); only the echo, which must fit one PDU, is refused here.
+        if value.len() + 5 > self.max_payload() {
             return err(REQ, handle, ErrorCode::InvalidAttributeValueLength);
         }
         if self.prepared.len() >= MAX_PREPARED_PARTS
