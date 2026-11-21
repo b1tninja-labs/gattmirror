@@ -21,6 +21,7 @@ pub struct Fake {
     silent: bool,
     block_when_idle: bool,
     auto_complete: bool,
+    two_pair_complete: bool,
     acl_out: Vec<Packet>,
     no_le_buffer: bool,
 }
@@ -61,6 +62,12 @@ impl Fake {
     /// Answer each ACL packet the host writes with a Number Of Completed Packets event.
     pub fn complete_acl_automatically(&mut self) {
         self.auto_complete = true;
+    }
+    /// Answer each ACL packet with a Number Of Completed Packets event of two pairs in the
+    /// specified layout (Core 6.3 §7.7.19: both handles, then both counts): another handle with
+    /// nine, then the written packet's handle with one.
+    pub fn complete_acl_in_two_pairs(&mut self) {
+        self.two_pair_complete = true;
     }
     /// ACL packets the host has written.
     pub fn acl_out(&self) -> &[Packet] {
@@ -142,6 +149,17 @@ impl Write for Fake {
                         let mut params = vec![1];
                         params.extend_from_slice(&handle.to_le_bytes());
                         params.extend_from_slice(&1u16.to_le_bytes());
+                        self.out
+                            .push_back(Packet::Event { code: 0x13, params }.encode());
+                    }
+                    if self.two_pair_complete {
+                        let mut params = vec![2];
+                        for h in [handle.wrapping_add(1), handle] {
+                            params.extend_from_slice(&h.to_le_bytes());
+                        }
+                        for c in [9u16, 1] {
+                            params.extend_from_slice(&c.to_le_bytes());
+                        }
                         self.out
                             .push_back(Packet::Event { code: 0x13, params }.encode());
                     }
