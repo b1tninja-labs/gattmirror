@@ -30,7 +30,7 @@ Status:
 | [open] | **E3.** A guest write to the mirrored write characteristic reaches a simulated adapter and its notification returns to the guest (no hardware) | none: end-to-end, project-defined | none yet |
 | [open] | **E4.** The Voltage app in BLE mode selects the mirrored adapter and runs its ELM327 init against the simulated adapter | none: end-to-end | none yet; needs the emulator and the app |
 | [open] | **E5.** The same against a real BLE adapter on a bench or in a vehicle | none | none: needs hardware |
-| [open] | The mirror relays attribute traffic only: no OBD, ELM327 or UDS parsing anywhere in the workspace | scope rule, `AGENTS.md` | none yet: a dependency/grep check to add |
+| [ok] | The mirror relays attribute traffic only: no OBD, ELM327 or UDS parsing anywhere in the workspace | scope rule, `AGENTS.md` | `crates/gattmirror/tests/relay_only.rs::workspace_rust_relays_attribute_bytes_only`; broken by adding `fn parse_obd_mode` and a spaced response literal in `crates/gattmirror/src/sim.rs` (1 failed) |
 
 ## Crates
 
