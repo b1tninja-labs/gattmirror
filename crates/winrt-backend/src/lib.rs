@@ -2,7 +2,7 @@
 //!
 //! [`WinrtBackend`] wraps a [`winrt_gatt::adapter::Adapter`], so it reconnects, restores subscriptions
 //! and keeps one notification channel. It is generic over the adapter's `Connector`, which is what
-//! lets the tests run it on a fake connector; [`connect`] builds the Windows one. Transport only: no
+//! lets the tests run it on a fake connector. `connect` builds the Windows one. Transport only: no
 //! application protocol is parsed. Nothing here has been run against a real adapter.
 
 use std::sync::mpsc::{self, Receiver};
